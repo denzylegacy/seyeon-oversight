@@ -1,0 +1,24 @@
+[package]
+name = "seyeon_trading_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "0.4.38", features = ["serde"] }
+serde = { version = "1.0.202", features = ["derive"] }
+thiserror = "1.0.60"
+itertools = "0.12.1"
+prettytable-rs = "0.10.0"
+
+polars = { version = "0.46.0", features = [
+    "abs",
+    "cum_agg",
+    "dtype-datetime",
+    "ewma",
+    "lazy",
+    "pct_change",
+    "rolling_window",
+] }
+
+[dev-dependencies]
+tokio = { version = "1.37.0", features = ["full", "macros", "test-util"] }

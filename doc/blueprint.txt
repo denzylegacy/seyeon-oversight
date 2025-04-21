@@ -1,0 +1,23 @@
+seyeon:
+    - Oversight engine:
+        - Indicators & APIs;
+    - E-mail client:
+        - Initially Google;
+    - App.
+
+Operational:
+    - Trusted Execution Environment (TEE):
+        - Intel laptop, Debian (12) + VPN/proxy;
+    - Multiple DEX for swaps:
+        - ...
+    - Raw material:
+        - Money;
+    - Operational vaults:
+        - Non-custodial wallet;
+    - Profit vaults:
+        - Non-custodial wallet;
+        - Access environment:
+            - Tails + Onion network;
+
+Go live:
+    - 23/04/2025;
