@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: seyeon-oversight
+    volumes:
+      - ./data:/usr/src/app/data
+    networks:
+      - seyeon-network
+    restart: unless-stopped
+
+networks:
+  seyeon-network:
+    driver: bridge

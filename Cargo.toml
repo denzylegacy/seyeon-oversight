@@ -1,0 +1,17 @@
+[workspace]
+members = [
+    "apps/oversight",
+    "crates/seyeon_cryptocompare",
+    "crates/seyeon_email",
+    "crates/seyeon_rapidapi",
+    "crates/seyeon_redis",
+    "crates/seyeon_shared_models",
+    "crates/seyeon_trading_engine",
+]
+
+[profile.release]
+opt-level = 3
+debug = false
+strip = true
+lto = true
+codegen-units = 1
