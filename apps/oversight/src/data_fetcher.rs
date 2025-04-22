@@ -19,8 +19,8 @@ pub enum FetchHistoricalDataError {
     ResponseDecodeError(#[from] serde_json::Error),
     #[error("API error: {0}")]
     ApiError(String),
-    #[error("Other error: {0}")]
-    Other(anyhow::Error),
+    // #[error("Other error: {0}")]
+    // Other(anyhow::Error),
 }
 
 #[derive(Debug, Deserialize)]
