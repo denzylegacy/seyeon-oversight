@@ -1,5 +1,26 @@
 [
   {
-    "portfolio": ["BTC", "ETH", "SOL"]
+    "portfolio": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "XRP",
+      "SUI",
+      "AVAX",
+      "LINK",
+      "HBAR",
+      "ADA",
+      "DOT",
+      "INJ",
+      "NEAR",
+      "UNI",
+      "VET",
+      "TRX",
+      "AAVE",
+      "MATIC",
+      "TON",
+      "UNI",
+      "BNB"
+    ]
   }
 ]
