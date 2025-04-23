@@ -47,11 +47,10 @@ pub async fn portfolio_fetcher() -> Result<Vec<Portfolio>> {
         if alt_path.exists() {
             File::open(alt_path)?
         } else {
-            return Err(anyhow::anyhow!("Arquivo options.json não encontrado em nenhum dos caminhos esperados: 
-                - {}/assets/options.json
-                - {}/apps/oversight/assets/options.json", 
-                current_dir.display(), current_dir.display()));
-        }
+            return Err(anyhow::anyhow!("The options.json file was not found in any of the expected paths: 
+                - {current_dir}/assets/options.json
+                - {current_dir}/apps/oversight/assets/options.json",
+                current_dir = current_dir.display()));
     };
     
     let reader = BufReader::new(file);
