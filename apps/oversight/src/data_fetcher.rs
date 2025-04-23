@@ -51,6 +51,7 @@ pub async fn portfolio_fetcher() -> Result<Vec<Portfolio>> {
                 - {current_dir}/assets/options.json
                 - {current_dir}/apps/oversight/assets/options.json",
                 current_dir = current_dir.display()));
+        }
     };
     
     let reader = BufReader::new(file);
