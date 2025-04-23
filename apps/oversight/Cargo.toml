@@ -11,7 +11,20 @@ seyeon_shared_models = { path = "../../crates/seyeon_shared_models" }
 seyeon_email = { path = "../../crates/seyeon_email" }
 seyeon_redis = { path = "../../crates/seyeon_redis" }
 polars_excel_writer = "0.12.0"
+polars = { version = "0.46.0", features = [
+    "abs",
+    "cum_agg",
+    "dtype-datetime",
+    "ewma",
+    "lazy",
+    "pct_change",
+    "rolling_window",
+] }
 clap = { version = "4.5.3", features = ["derive"] }
+reqwest = { version = "0.12.12", features = [
+    "json",
+    "rustls-tls",
+], default-features = false }
 tokio = { version = "1.37.0", features = ["full"] }
 anyhow = "1.0.96"
 chrono = { version = "0.4.38", features = ["serde"] }

@@ -11,6 +11,15 @@ lettre = { version = "0.10", features = [
     "smtp-transport",
     "tokio1-native-tls",
 ] }
+polars = { version = "0.46.0", features = [
+    "abs",
+    "cum_agg",
+    "dtype-datetime",
+    "ewma",
+    "lazy",
+    "pct_change",
+    "rolling_window",
+] }
 chrono = "0.4"
 
 [dev-dependencies]
