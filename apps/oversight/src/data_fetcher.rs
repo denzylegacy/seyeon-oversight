@@ -35,11 +35,25 @@ pub struct FetchedData {
 }
 
 pub async fn portfolio_fetcher() -> Result<Vec<Portfolio>> {
-    if let Ok(current_dir) = env::current_dir() {
-        println!("pwd {:?}", current_dir);
-    }
+    let current_dir = env::current_dir()?;
+    println!("pwd {:?}", current_dir);
 
-    let file = File::open("assets/options.json")?;
+    let file_path = std::path::Path::new("assets/options.json");
+    
+    let file = if file_path.exists() {
+        File::open(file_path)?
+    } else {
+        let alt_path = std::path::Path::new("apps/oversight/assets/options.json");
+        if alt_path.exists() {
+            File::open(alt_path)?
+        } else {
+            return Err(anyhow::anyhow!("Arquivo options.json não encontrado em nenhum dos caminhos esperados: 
+                - {}/assets/options.json
+                - {}/apps/oversight/assets/options.json", 
+                current_dir.display(), current_dir.display()));
+        }
+    };
+    
     let reader = BufReader::new(file);
 
     let portfolios: Vec<Portfolio> = serde_json::from_reader(reader)?;

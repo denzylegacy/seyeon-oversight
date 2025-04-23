@@ -1,7 +1,7 @@
 use chrono::Local;
 use tokio::test;
-
 use seyeon_email::EmailConfig;
+use seyeon_redis::models::{CryptoStatus, TradeAction};
 
 #[test]
 pub async fn report_sender() {
@@ -20,10 +20,13 @@ pub async fn report_sender() {
     println!("Time: {}", current_time);
     println!("=====================================\n");
 
-    let mut main_status = Vec::new();
-    main_status.push(("SOL", "Buy -test-"));
+    let status = CryptoStatus {
+        symbol: "SOL".to_string(),
+        action: TradeAction::Buy,
+        sent: false,
+    };
 
-    if let Err(e) = email_config.report_sender(main_status) {
+    if let Err(e) = email_config.report_sender(&status).await {
         eprintln!("Failed to send complete report: {}", e);
     } else {
         println!("Complete report sent successfully!");

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+seyeon_redis = { path = "../../crates/seyeon_redis" }
 dotenv = "0.15.0"
 lettre = { version = "0.10", features = [
     "builder",
@@ -14,6 +15,3 @@ chrono = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1.43.0", features = ["rt", "macros"] }
-
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=x86-64"]
