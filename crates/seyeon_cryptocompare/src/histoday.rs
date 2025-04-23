@@ -10,8 +10,21 @@ pub struct HistodayParams {
 
     #[serde(rename = "tsym")]
     pub target_sym: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub to_ts: Option<u32>,
+}
+
+impl Default for HistodayParams {
+    fn default() -> Self {
+        Self {
+            source_sym: String::new(),
+            target_sym: String::new(),
+            limit: Some(365),
+            to_ts: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -25,13 +38,32 @@ pub struct CryptoCompareHistodayResponse {
     #[serde(rename = "Type")]
     pub kind: i64,
     #[serde(rename = "RateLimit")]
-    pub rate_limit: RateLimit,
+    pub rate_limit: Option<RateLimit>,
     #[serde(rename = "Data")]
-    pub data: CryptoCompareHistodayData,
+    pub data: Option<CryptoCompareHistodayData>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct RateLimit {}
+pub struct RateLimit {
+    #[serde(rename = "calls_made", default)]
+    pub calls_made: Option<CallsInfo>,
+    #[serde(rename = "calls_left", default)]
+    pub calls_left: Option<CallsInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct CallsInfo {
+    #[serde(default)]
+    pub second: Option<i32>,
+    #[serde(default)]
+    pub minute: Option<i32>,
+    #[serde(default)]
+    pub hour: Option<i32>,
+    #[serde(default)]
+    pub day: Option<i32>,
+    #[serde(default)]
+    pub month: Option<i32>,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CryptoCompareHistodayData {

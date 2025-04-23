@@ -16,3 +16,4 @@ Cargo.lock
 doc/help.txt
 
 *.env
+/apps/oversight/cache

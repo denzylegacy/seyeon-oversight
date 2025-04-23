@@ -91,6 +91,14 @@ pub struct Event {
     pub signal: Signal,
 }
 
+#[derive(Debug, Clone)]
+pub struct PortfolioSimulation {
+    pub symbol: String,
+    pub roi: f64,
+    pub final_value: f64,
+    pub num_trades: usize,
+}
+
 impl TradingEngine {
     /// Constructs a new TradingEngine. Note that we immediately calculate the
     /// final dataframe from the provided Indicators.
@@ -557,5 +565,322 @@ impl TradingEngine {
             num_trades: self.trade_history.len(),
             estimated_fees_paid: total_fees,
         }
+    }
+
+    /// Calculates the correlation matrix between multiple assets
+    /// Returns a DataFrame with the correlation matrix
+    pub fn calculate_correlation_matrix(price_data: &[(&str, &Vec<f64>)]) -> Result<DataFrame, PolarsError> {
+        let mut columns = Vec::new();
+        
+        for (symbol, prices) in price_data {
+            columns.push(Series::new((*symbol).to_string().into(), (*prices).clone()).into());
+        }
+        
+        let df = DataFrame::new(columns)?;
+        
+        let col_names = df.get_column_names();
+        let n_cols = col_names.len();
+        
+        let mut corr_matrix = vec![vec![0.0; n_cols]; n_cols];
+        
+        for i in 0..n_cols {
+            for j in 0..n_cols {
+                if i == j {
+                    corr_matrix[i][j] = 1.0;
+                } else {
+                    let series_i = df.column(col_names[i])?.f64()?;
+                    let series_j = df.column(col_names[j])?.f64()?;
+                    
+                    let corr = Self::pearson_correlation(series_i, series_j)?;
+                    corr_matrix[i][j] = corr;
+                }
+            }
+        }
+        
+        let mut corr_columns = Vec::new();
+        
+        for (i, name) in col_names.iter().enumerate() {
+            let corr_series = Series::new(name.to_string().into(), corr_matrix[i].clone()).into();
+            corr_columns.push(corr_series);
+        }
+        
+        let corr_df = DataFrame::new(corr_columns)?;
+        
+        Ok(corr_df)
+    }
+    
+    fn pearson_correlation(s1: &ChunkedArray<Float64Type>, s2: &ChunkedArray<Float64Type>) -> Result<f64, PolarsError> {
+        // Get lengths, ensure they match
+        let len1 = s1.len();
+        let len2 = s2.len();
+        
+        if len1 != len2 {
+            return Err(PolarsError::ShapeMismatch(
+                format!("Series lengths don't match: {} vs {}", len1, len2).into(),
+            ));
+        }
+        
+        if len1 == 0 {
+            return Err(PolarsError::ComputeError(
+                "Cannot compute correlation on empty series".into(),
+            ));
+        }
+        
+        let mean1: f64 = s1.mean().unwrap_or(0.0);
+        let mean2: f64 = s2.mean().unwrap_or(0.0);
+        
+        let mut numerator = 0.0;
+        let mut denom1 = 0.0;
+        let mut denom2 = 0.0;
+        
+        for i in 0..len1 {
+            let v1 = match s1.get(i) {
+                Some(v) => v,
+                None => continue,
+            };
+            
+            let v2 = match s2.get(i) {
+                Some(v) => v,
+                None => continue,
+            };
+            
+            let diff1 = v1 - mean1;
+            let diff2 = v2 - mean2;
+            
+            numerator += diff1 * diff2;
+            denom1 += diff1 * diff1;
+            denom2 += diff2 * diff2;
+        }
+        
+        if denom1 == 0.0 || denom2 == 0.0 {
+            return Ok(0.0);
+        }
+        
+        let correlation = numerator / (denom1.sqrt() * denom2.sqrt());
+        
+        if correlation < -1.0 || correlation > 1.0 {
+            Ok(correlation.clamp(-1.0, 1.0))
+        } else {
+            Ok(correlation)
+        }
+    }
+    
+    /// Exports the correlation matrix to an HTML heatmap
+    pub fn export_correlation_heatmap(correlation_df: &DataFrame, file_path: &str) -> std::io::Result<()> {
+        let mut html_content = String::from(r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crypto Assets Correlation Heatmap</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { width: 900px; height: 700px; }
+        h1 { color: #333; }
+    </style>
+</head>
+<body>
+    <h1>Crypto Assets Correlation Heatmap</h1>
+    <div class="container" id="heatmap"></div>
+    <script>
+"#);
+
+        let symbols: Vec<String> = correlation_df.get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        
+        let mut z_values = String::from("[");
+        for i in 0..symbols.len() {
+            z_values.push_str("[");
+            for j in 0..symbols.len() {
+                let value = match correlation_df.get(j) {
+                    Some(series) => match series.get(i) {
+                        Some(value) => match value.try_extract::<f64>() {
+                            Ok(v) => v,
+                            Err(_) => 0.0,
+                        },
+                        None => 0.0,
+                    },
+                    None => 0.0,
+                };
+                z_values.push_str(&format!("{:.4}", value));
+                if j < symbols.len() - 1 {
+                    z_values.push_str(", ");
+                }
+            }
+            z_values.push_str("]");
+            if i < symbols.len() - 1 {
+                z_values.push_str(", ");
+            }
+        }
+        z_values.push_str("]");
+        
+        let symbols_js = symbols
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<String>>()
+            .join(", ");
+        
+        html_content.push_str(&format!(r#"
+        var data = [{{
+            z: {},
+            x: [{}],
+            y: [{}],
+            type: 'heatmap',
+            colorscale: 'RdBu',
+            zmin: -1,
+            zmax: 1
+        }}];
+
+        var layout = {{
+            title: 'Crypto Assets Price Correlation',
+            annotations: [],
+            xaxis: {{
+                ticks: '',
+                side: 'top'
+            }},
+            yaxis: {{
+                ticks: '',
+                ticksuffix: ' ',
+                autosize: false
+            }}
+        }};
+
+        // Add correlation values as annotations
+        for (var i = 0; i < {3}.length; i++) {{
+            for (var j = 0; j < {3}.length; j++) {{
+                var result = {{
+                    xref: 'x1',
+                    yref: 'y1',
+                    x: {3}[j],
+                    y: {3}[i],
+                    text: data[0].z[i][j].toFixed(2),
+                    font: {{
+                        family: 'Arial',
+                        size: 12,
+                        color: Math.abs(data[0].z[i][j]) > 0.5 ? 'white' : 'black'
+                    }},
+                    showarrow: false
+                }};
+                layout.annotations.push(result);
+            }}
+        }}
+
+        Plotly.newPlot('heatmap', data, layout);
+    </script>
+</body>
+</html>
+"#, z_values, symbols_js, symbols_js, symbols_js));
+
+        std::fs::write(file_path, html_content)?;
+        
+        Ok(())
+    }
+    
+    /// Run simulation for multiple assets and compare their performance
+    pub fn compare_assets_performance(assets_data: &[(&str, DataFrame)], _days: usize) -> Vec<PortfolioSimulation> {
+        let mut results = Vec::new();
+        
+        for (symbol, dataframe) in assets_data {
+            let params = Params::default();
+            let mut engine = TradingEngine::new(dataframe.clone(), None, params);
+            
+            engine.run_simulation();
+            let summary = engine.get_summary();
+            
+            results.push(PortfolioSimulation {
+                symbol: symbol.to_string(),
+                roi: summary.roi,
+                final_value: summary.final_portfolio_value,
+                num_trades: summary.num_trades,
+            });
+        }
+        
+        // Sort by ROI in descending order
+        results.sort_by(|a, b| b.roi.partial_cmp(&a.roi).unwrap_or(std::cmp::Ordering::Equal));
+        
+        results
+    }
+    
+    /// Exports the performance comparison to an HTML bar chart
+    pub fn export_performance_comparison(results: &[PortfolioSimulation], file_path: &str) -> std::io::Result<()> {
+        let mut html_content = String::from(r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crypto Assets Performance Comparison</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { width: 900px; height: 700px; }
+        h1 { color: #333; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+    </style>
+</head>
+<body>
+    <h1>Crypto Assets Performance Comparison (365-day Simulation)</h1>
+    <div class="container" id="chart"></div>
+    
+    <h2>Detailed Results</h2>
+    <table>
+        <tr>
+            <th>Rank</th>
+            <th>Asset</th>
+            <th>ROI (%)</th>
+            <th>Final Value ($)</th>
+            <th>Number of Trades</th>
+        </tr>
+"#);
+
+        for (i, result) in results.iter().enumerate() {
+            html_content.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{:.2}%</td><td>${:.2}</td><td>{}</td></tr>\n",
+                i + 1, result.symbol, result.roi, result.final_value, result.num_trades
+            ));
+        }
+        
+        html_content.push_str("</table>\n");
+
+        let symbols: Vec<String> = results.iter()
+            .map(|r| format!("\"{}\"", r.symbol))
+            .collect();
+        
+        let roi_values: Vec<String> = results.iter()
+            .map(|r| format!("{:.2}", r.roi))
+            .collect();
+        
+        html_content.push_str(&format!(r#"
+    <script>
+        var data = [{{
+            x: [{}],
+            y: [{}],
+            type: 'bar',
+            marker: {{
+                color: Array({}).fill().map((_, i) => 
+                    'rgb(' + Math.floor(255 - i * (255 / {})) + ',' + 
+                    Math.floor(50 + i * (150 / {})) + ',' + Math.floor(50) + ')'
+                )
+            }}
+        }}];
+
+        var layout = {{
+            title: 'Return on Investment (ROI) by Asset',
+            xaxis: {{ title: 'Asset' }},
+            yaxis: {{ title: 'ROI (%)' }}
+        }};
+
+        Plotly.newPlot('chart', data, layout);
+    </script>
+</body>
+</html>
+"#, symbols.join(", "), roi_values.join(", "), symbols.len(), symbols.len(), symbols.len()));
+
+        std::fs::write(file_path, html_content)?;
+        
+        Ok(())
     }
 }
