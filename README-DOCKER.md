@@ -58,7 +58,3 @@ docker-compose down
 ```bash
 docker-compose restart
 ```
-
-## Data Persistence
-
-Redis data is persisted in the Docker volume `redis-data` and will survive container restarts.
