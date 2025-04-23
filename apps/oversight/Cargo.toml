@@ -8,12 +8,14 @@ seyeon_trading_engine = { version = "0.1.0", path = "../../crates/seyeon_trading
 seyeon_rapidapi = { path = "../../crates/seyeon_rapidapi" }
 seyeon_cryptocompare = { path = "../../crates/seyeon_cryptocompare" }
 seyeon_shared_models = { path = "../../crates/seyeon_shared_models" }
+seyeon_email = { path = "../../crates/seyeon_email" }
 seyeon_redis = { path = "../../crates/seyeon_redis" }
 polars_excel_writer = "0.12.0"
 clap = { version = "4.5.3", features = ["derive"] }
 tokio = { version = "1.37.0", features = ["full"] }
 anyhow = "1.0.96"
 chrono = { version = "0.4.38", features = ["serde"] }
+dotenv = "0.15.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.12"

@@ -1,64 +1,64 @@
-# Executando Seyeon Oversight com Docker
+# Running Seyeon Oversight with Docker
 
-Este documento contém instruções para executar o sistema Seyeon Oversight usando Docker e Docker Compose.
+This document contains instructions for running the Seyeon Oversight system using Docker and Docker Compose.
 
-## Pré-requisitos
+## Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) instalado
-- [Docker Compose](https://docs.docker.com/compose/install/) instalado
+- [Docker](https://docs.docker.com/get-docker/) installed
+- [Docker Compose](https://docs.docker.com/compose/install/) installed
 
-## Configuração
+## Configuration
 
-1. Crie um arquivo `.env` baseado no exemplo fornecido:
+1. Create a `.env` file based on the provided example:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Edite o arquivo `.env` e adicione suas credenciais e configurações:
+2. Edit the `.env` file and add your credentials and settings:
 
 ```bash
-nano .env  # ou use seu editor de texto preferido
+nano .env  # or use your preferred text editor
 ```
 
-### Variáveis de ambiente necessárias:
+### Required environment variables:
 
-- `REDIS_URL`: URL de conexão com o Redis (já configurado para o container)
-- `CRYPTOCOMPARE_API_KEY`: Sua chave de API do CryptoCompare
-- `RAPIDAPI_KEY`: Sua chave de API do RapidAPI para o Fear & Greed Index
-- `SMTP_FROM_EMAIL`: Email de origem para envio de alertas
-- `SMTP_TO_EMAIL`: Email de destino para alertas
-- `SMTP_CC_EMAILS`: Lista de emails CC separados por vírgula
-- `SMTP_PASSWORD`: Senha SMTP ou senha de aplicativo (recomendado para Gmail)
+- `REDIS_URL`: Redis connection URL (already configured for the container)
+- `CRYPTOCOMPARE_API_KEY`: Your CryptoCompare API key
+- `RAPIDAPI_KEY`: Your RapidAPI key for the Fear & Greed Index
+- `SMTP_FROM_EMAIL`: Source email for sending alerts
+- `SMTP_TO_EMAIL`: Destination email for alerts
+- `SMTP_CC_EMAILS`: List of CC emails separated by commas
+- `SMTP_PASSWORD`: SMTP password or application password (recommended for Gmail)
 
-## Construção e Execução
+## Building and Running
 
-### Construir e iniciar os containers
+### Build and start the containers
 
 ```bash
 docker-compose up -d --build
 ```
 
-A flag `-d` executa os containers em modo detached (segundo plano).
+The `-d` flag runs the containers in detached mode (background).
 
-### Verificar logs da aplicação
+### Check application logs
 
 ```bash
 docker logs -f seyeon-oversight
 ```
 
-### Parar os containers
+### Stop the containers
 
 ```bash
 docker-compose down
 ```
 
-### Reiniciar os containers
+### Restart the containers
 
 ```bash
 docker-compose restart
 ```
 
-## Persistência de Dados
+## Data Persistence
 
-Os dados do Redis são persistidos no volume Docker `redis-data` e sobreviverão a reinicializações do container.
+Redis data is persisted in the Docker volume `redis-data` and will survive container restarts.
