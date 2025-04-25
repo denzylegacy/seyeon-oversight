@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-seyeon_trading_engine = { path = "../../crates/seyeon_trading_engine" }
+seyeon_trading_engine = "0.1.0" # Replace with the actual version of seyeon_trading_engine
 seyeon_rapidapi = { path = "../../crates/seyeon_rapidapi" }
 seyeon_cryptocompare = { path = "../../crates/seyeon_cryptocompare" }
 seyeon_redis = { path = "../../crates/seyeon_redis" }
