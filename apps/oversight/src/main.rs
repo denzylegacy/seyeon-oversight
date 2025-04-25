@@ -281,6 +281,6 @@ fn main() -> anyhow::Result<()> {
         }
 
         println!("\nWaiting for next check...");
-        sleep(Duration::from_secs(300));
+        sleep(Duration::from_secs(60));
     }
 }
