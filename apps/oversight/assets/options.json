@@ -1,6 +1,7 @@
 [
   {
-    "portfolio": [
+    "portfolio": ["BTC", "SOL", "XRP", "SUI", "NEAR"],
+    "suggested": [
       "BTC",
       "ETH",
       "SOL",
