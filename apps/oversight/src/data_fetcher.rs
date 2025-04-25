@@ -13,6 +13,28 @@ use std::io::BufReader;
 use std::io::{Write, stdout};
 use std::path::Path;
 use thiserror::Error;
+use rand::seq::SliceRandom;
+
+fn get_random_api_key(env_var_name: &str) -> anyhow::Result<String> {
+    let api_keys = std::env::var(env_var_name)?
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<String>>();
+    
+    if api_keys.is_empty() {
+        return Err(anyhow::anyhow!("No valid API keys found in {}", env_var_name));
+    }
+    
+    let mut rng = rand::thread_rng();
+    let selected_key = api_keys.choose(&mut rng)
+        .ok_or_else(|| anyhow::anyhow!("Failed to select a random API key"))?;
+    
+    println!("Selected a random API key from {} ({} keys available)", 
+        env_var_name, api_keys.len());
+    
+    Ok(selected_key.clone())
+}
 
 #[derive(Error, Debug)]
 pub enum FetchHistoricalDataError {
@@ -127,7 +149,8 @@ pub async fn fetch_historical_data(symbol: String, days: u32) -> anyhow::Result<
     if let Some(cached_data) = check_cache(&symbol, 1) {
         println!("Using cached data for {}", symbol);
         
-        let fgi_client = RapidApiClient::new(std::env::var("RAPIDAPI_KEY")?.as_str());
+        let rapid_api_key = get_random_api_key("RAPIDAPI_KEY")?;
+        let fgi_client = RapidApiClient::new(&rapid_api_key);
         let fgi_data = match fgi_client.call0::<FearAndGreedIndex>().await {
             Ok(data) => Some(data),
             Err(e) => {
@@ -145,13 +168,7 @@ pub async fn fetch_historical_data(symbol: String, days: u32) -> anyhow::Result<
     print!("Fetching historical data of {} (please, wait!)...", symbol);
     stdout().flush()?;
 
-    let api_key = match std::env::var("CRYPTOCOMPARE_API_KEY") {
-        Ok(key) => key,
-        Err(e) => {
-            eprintln!("Error getting API key: {}", e);
-            return Err(anyhow::anyhow!("Failed to get CRYPTOCOMPARE_API_KEY: {}", e));
-        }
-    };
+    let api_key = get_random_api_key("CRYPTOCOMPARE_API_KEY")?;
     println!("Using API key: {}...", &api_key.chars().take(5).collect::<String>());
     
     let cc_client = CryptocompareClient::new(&api_key);
@@ -263,7 +280,8 @@ pub async fn fetch_historical_data(symbol: String, days: u32) -> anyhow::Result<
         eprintln!("Warning: Failed to save data to cache: {}", e);
     }
 
-    let fgi_client = RapidApiClient::new(std::env::var("RAPIDAPI_KEY")?.as_str());
+    let rapid_api_key = get_random_api_key("RAPIDAPI_KEY")?;
+    let fgi_client = RapidApiClient::new(&rapid_api_key);
 
     let fgi_data = match fgi_client.call0::<FearAndGreedIndex>().await {
         Ok(data) => Some(data),
