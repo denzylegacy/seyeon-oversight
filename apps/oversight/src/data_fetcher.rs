@@ -120,7 +120,7 @@ fn check_cache(symbol: &str, max_age_days: i64) -> Option<Vec<DataPoint>> {
 }
 
 fn save_to_cache(symbol: &str, data: &Vec<DataPoint>) -> std::io::Result<()> {
-    // Usar o mesmo diretório com permissões garantidas
+    // Use the same directory with guaranteed permissions
     let cache_dir = Path::new("apps/oversight/cache");
     if !cache_dir.exists() {
         std::fs::create_dir_all(cache_dir)?;
@@ -141,10 +141,8 @@ fn save_to_cache(symbol: &str, data: &Vec<DataPoint>) -> std::io::Result<()> {
 }
 
 pub async fn fetch_historical_data(symbol: String, days: u32) -> anyhow::Result<FetchedData> {
-    println!("Symbol being fetched: '{}'", symbol);
-
     let symbol = symbol.trim_matches(|c| c == '"' || c == '\'' || c == ' ').to_string();
-    println!("Symbol after cleaning: '{}'", symbol);
+    println!("Symbol being fetched: '{}'", symbol);
     
     if let Some(cached_data) = check_cache(&symbol, 1) {
         println!("Using cached data for {}", symbol);
