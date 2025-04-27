@@ -44,14 +44,14 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             initial_capital: 10_000.0,
-            initial_investment_fraction: 0.35,     // Invest only 35% initially to leave room for aggressive DCA
-            dca_buy_threshold: 0.10,              // More aggressive DCA at 10% drops
-            dca_buy_fraction: 0.75,               // Invest 75% of available cash in each DCA
-            profit_sell_threshold: 0.20,          // Take profit at 20% gains - let winners run longer
-            profit_sell_fraction: 0.40,           // Sell 40% of position for partial profits
-            generic_fee: 0.005,                   // Keep fee at 0.5%
-            buy_threshold: 3,                     // More lenient buy threshold
-            sell_threshold: 2,                    // Keep sell threshold at 2 conditions
+            initial_investment_fraction: 1.0,
+            dca_buy_threshold: 0.05,
+            dca_buy_fraction: 1.0,
+            profit_sell_threshold: 0.10,
+            profit_sell_fraction: 0.5,
+            generic_fee: 0.005,
+            buy_threshold: 3,
+            sell_threshold: 3,
         }
     }
 }
@@ -59,6 +59,7 @@ impl Default for Params {
 // --- TradingEngine updated to use the final DataFrame ---
 pub struct TradingEngine {
     /// The final (fully calculated) dataframe with all indicators.
+    pub symbol: String,
     pub final_df: DataFrame,
     pub fgi: u8, // if not provided, assume 50 (neutral)
     pub params: Params,
@@ -82,8 +83,6 @@ pub enum Signal {
     Hold,
     Buy,
     Sell,
-    DcaBuy,
-    DcaSell,
 }
 
 #[derive(Debug, Clone)]
@@ -104,10 +103,12 @@ pub struct PortfolioSimulation {
 impl TradingEngine {
     /// Constructs a new TradingEngine. Note that we immediately calculate the
     /// final dataframe from the provided Indicators.
-    pub fn new(final_df: DataFrame, fgi: Option<u8>, params: Params) -> Self {
+    pub fn new(
+        symbol: String, final_df: DataFrame, fgi: Option<u8>, params: Params) -> Self {
         let fgi_val = fgi.unwrap_or(50);
 
         Self {
+            symbol,
             final_df,
             fgi: fgi_val,
             current_cash: params.initial_capital,
@@ -118,111 +119,151 @@ impl TradingEngine {
         }
     }
 
-    /// Constructs a new TradingEngine with an associated symbol. This is a convenience 
-    /// method that just calls new() but allows specifying a symbol for identification.
-    pub fn new_with_symbol(final_df: DataFrame, _symbol: String, fgi: Option<u8>, params: Params) -> Self {
-        // We ignore the symbol for now - it's just for identification in the caller
-        Self::new(final_df, fgi, params)
-    }
-
-    /// Generate buy and sell signals with advanced weighted scoring system
+    /// Generates buy and sell signals using the latest row of the final dataframe.
     pub fn generate_signal(&self, idx: usize) -> (bool, bool) {
-        let price = self.final_df.column("price").unwrap().f64().unwrap().get(idx).unwrap();
-        let ma25 = self.final_df.column("ma25").unwrap().f64().unwrap().get(idx).unwrap();
-        let ma50 = self.final_df.column("ma50").unwrap().f64().unwrap().get(idx).unwrap();
-        let ma5 = self.final_df.column("ma5").unwrap().f64().unwrap().get(idx).unwrap();
-        let ma111 = self.final_df.column("ma111").unwrap().f64().unwrap().get(idx).unwrap_or(price * 0.9);
-        let macd = self.final_df.column("macd").unwrap().f64().unwrap().get(idx).unwrap();
-        let signal_val = self.final_df.column("signal").unwrap().f64().unwrap().get(idx).unwrap();
-        let rsi = self.final_df.column("rsi").unwrap().f64().unwrap().get(idx).unwrap_or(50.0);
-        let _roc = self.final_df.column("roc").unwrap().f64().unwrap().get(idx).unwrap_or(0.0);
-        let lower_band = self.final_df.column("lower_band").unwrap().f64().unwrap().get(idx).unwrap_or(price * 0.9);
-        let upper_band = self.final_df.column("upper_band").unwrap().f64().unwrap().get(idx).unwrap_or(price * 1.1);
-        let vma20 = self.final_df.column("vma20").unwrap().f64().unwrap().get(idx).unwrap_or(price);
-        let atr14 = self.final_df.column("atr14").unwrap().f64().unwrap().get(idx).unwrap_or(price * 0.05);
-        
-        // Price volatility metric - higher means more volatile
-        let volatility_ratio = atr14 / price;
-        let volatility_high = volatility_ratio > 0.03; // 3% daily volatility is high
-        
-        // Trend strength metrics
-        let strong_uptrend = ma5 > ma25 && ma25 > ma50 && ma50 > ma111;
-        let is_oversold = rsi < 30.0;
-        let is_overbought = rsi > 70.0;
-        
-        // Advanced buy scoring system (total possible: 100 points)
-        let mut buy_score = 0;
-        
-        // Price relative to moving averages (30 points)
-        if price > ma5 { buy_score += 5; }
-        if price > ma25 { buy_score += 10; }
-        if ma5 > ma25 { buy_score += 15; }
-        
-        // Momentum indicators (25 points)
-        if macd > signal_val { buy_score += 15; }
-        if macd > 0.0 { buy_score += 10; }
-        
-        // Oversold conditions (20 points)
-        if is_oversold { buy_score += 20; }
-        else if rsi < 40.0 { buy_score += 10; }
-        
-        // Support level indicators (15 points)
-        if price <= lower_band * 1.02 { buy_score += 15; }
-        else if price <= lower_band * 1.05 { buy_score += 10; }
-        
-        // Volume confirmation (10 points)
-        if vma20 > price * 0.9 { buy_score += 10; }
-        
-        // Market sentiment from Fear and Greed Index (0-100)
-        // For crypto, extreme fear (low FGI) can be a good buying opportunity
-        // (0-25 extreme fear, 26-45 fear, 46-55 neutral, 56-75 greed, 76-100 extreme greed)
-        if self.fgi < 25 { buy_score += 15; } // extreme fear is a contrarian buy signal
-        else if self.fgi < 40 { buy_score += 10; }
-        else if self.fgi > 80 { buy_score -= 15; } // extreme greed reduces buy score
-        else if self.fgi > 65 { buy_score -= 10; }
-        
-        // Advanced sell scoring system (total possible: 100 points)
-        let mut sell_score = 0;
-        
-        // Price relative to moving averages (30 points)
-        if price < ma5 { sell_score += 5; }
-        if price < ma25 { sell_score += 10; }
-        if ma5 < ma25 { sell_score += 15; }
-        
-        // Momentum indicators (25 points)
-        if macd < signal_val { sell_score += 15; }
-        if macd < 0.0 { sell_score += 10; }
-        
-        // Overbought conditions (20 points)
-        if is_overbought { sell_score += 20; }
-        else if rsi > 65.0 { sell_score += 10; }
-        
-        // Resistance level indicators (15 points)
-        if price >= upper_band * 0.98 { sell_score += 15; }
-        else if price >= upper_band * 0.95 { sell_score += 10; }
-        
-        // Volume confirmation (10 points)
-        if vma20 < price { sell_score += 10; }
-        
-        // Market sentiment penalties from Fear and Greed Index (0-100)
-        if self.fgi > 80 { sell_score += 15; } // extreme greed is a sell signal
-        else if self.fgi > 65 { sell_score += 10; }
-        else if self.fgi < 20 { sell_score -= 10; } // extreme fear reduces sell score
-        
-        // Adjust thresholds based on volatility
-        let buy_threshold = if volatility_high { 70 } else { 60 };
-        let sell_threshold = if volatility_high { 65 } else { 70 };
-        
-        // During strong uptrend, we want to be more conservative with selling
-        let adjusted_sell_threshold = if strong_uptrend { sell_threshold + 10 } else { sell_threshold };
-        
-        let buy_signal = buy_score >= buy_threshold;
-        let sell_signal = sell_score >= adjusted_sell_threshold;
-        
+        let price = self
+            .final_df
+            .column("price")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+        let ma25 = self
+            .final_df
+            .column("ma25")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+        let ma50 = self
+            .final_df
+            .column("ma50")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+        let ma5 = self
+            .final_df
+            .column("ma5")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+        let macd = self
+            .final_df
+            .column("macd")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+        let signal_val = self
+            .final_df
+            .column("signal")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+        let rsi = self
+            .final_df
+            .column("rsi")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+        let roc = self
+            .final_df
+            .column("roc")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap_or(f64::NAN);
+        let lower_band = self
+            .final_df
+            .column("lower_band")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap_or(f64::NAN);
+        let ma111 = self
+            .final_df
+            .column("ma111")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+        let pi_cycle_top = self
+            .final_df
+            .column("pi_cycle_top")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(idx)
+            .unwrap();
+
+        let mut buy_conditions = vec![
+            price > (self.current_cash + (self.current_cash * 0.01)),
+            price > ma25,
+            price > ma50,
+            // ma50 > ma200, 
+            ma5 > (ma25 + (ma25 * 0.01)),
+            macd > signal_val,
+            rsi < 40.0,
+            roc > 2.0,
+            price <= lower_band * 1.01,
+            // volume_24h > volume_ma14,
+            self.fgi <= 44,
+        ];
+
+        let mut sell_conditions = vec![
+            price < (self.current_cash - (self.current_cash * 0.01)),
+            ma5 > ma25, 
+            // ma50 < ma200,
+            rsi > 65.0,
+            macd < signal_val,
+            // price >= upper_band * 0.98,
+            self.fgi >= 56,
+            // volume_24h > volume_ma14,
+        ];
+
+        if self.symbol == "BTC" {
+            let close_to_pi_cycle_top = ma111 >= (pi_cycle_top - (pi_cycle_top * 0.05));
+
+            buy_conditions.push(close_to_pi_cycle_top);
+            sell_conditions.push(close_to_pi_cycle_top);
+        }
+
+        let buy_count = buy_conditions.iter().filter(|&&c| c).count();
+
+        let sell_count = sell_conditions.iter().filter(|&&c| c).count();
+
+        // if self.fgi < 50 {
+        //     self.params.buy_threshold + 1
+        // } else {
+        //     self.params.buy_threshold
+        // };
+        // if self.fgi > 60 {
+        //     self.params.sell_threshold + 1
+        // } else {
+        //     self.params.sell_threshold
+        // };
+
+        let buy_signal = buy_count >= self.params.buy_threshold;
+        let sell_signal = sell_count >= self.params.sell_threshold;
+
         (buy_signal, sell_signal)
     }
 
-    /// Runs in "production" mode (using only the most recent row).
+    /// Runs in “production” mode (using only the most recent row).
     pub fn poll_event(&self) -> Event {
         let idx = self.final_df.height() - 1;
         let price = self
@@ -243,27 +284,8 @@ impl TradingEngine {
             .get(idx)
             .unwrap();
         let datetime = Utc.timestamp_millis_opt(dt_val).unwrap();
-        
-        // Regular buy/sell signals
         let (buy_signal, sell_signal) = self.generate_signal(idx);
-        
-        // Check for DCA opportunities
-        let is_dca_buy = self.check_dca_buy_opportunity(idx);
-        let is_dca_sell = self.check_dca_sell_opportunity(idx);
-        
-        if is_dca_buy {
-            Event {
-                datetime,
-                price,
-                signal: Signal::DcaBuy,
-            }
-        } else if is_dca_sell {
-            Event {
-                datetime,
-                price,
-                signal: Signal::DcaSell,
-            }
-        } else if buy_signal && !sell_signal {
+        if buy_signal && !sell_signal {
             Event {
                 datetime,
                 price,
@@ -332,65 +354,40 @@ impl TradingEngine {
                 .unwrap()
                 .get(idx)
                 .unwrap();
-                
-            // More aggressive DCA buy strategy based on our sophisticated conditions
-            let dt_val = self
-                .final_df
-                .column("datetime")
-                .unwrap()
-                .i64()
-                .unwrap()
-                .get(idx)
-                .unwrap();
-            let datetime = Utc.timestamp_millis_opt(dt_val).unwrap();
-            
-            // Scale investment amount based on price drop percentage
-            let drop_percentage = (pos.avg_price - price) / pos.avg_price;
-            let investment_scale = if drop_percentage > 0.2 {
-                // Very large drop, deploy maximum capital
-                1.0
-            } else if drop_percentage > 0.15 {
-                // Significant drop, deploy most capital
-                0.9
-            } else if drop_percentage > 0.1 {
-                // Good drop, deploy substantial capital
-                self.params.dca_buy_fraction
-            } else {
-                // Small drop, deploy moderate capital
-                self.params.dca_buy_fraction * 0.8
-            };
-            
-            let investment = self.current_cash * investment_scale;
-            
-            // Only proceed if investment is meaningful
-            if investment < 100.0 {
-                return;
+            if price < pos.avg_price * (1.0 - self.params.dca_buy_threshold)
+                && self.current_cash > 100.0
+            {
+                let dt_val = self
+                    .final_df
+                    .column("datetime")
+                    .unwrap()
+                    .i64()
+                    .unwrap()
+                    .get(idx)
+                    .unwrap();
+                let datetime = Utc.timestamp_millis_opt(dt_val).unwrap();
+                let investment = self.current_cash * self.params.dca_buy_fraction;
+                if investment < 50.0 {
+                    return;
+                }
+                let fee = investment * self.params.generic_fee;
+                let amount = (investment - fee) / price;
+                let total_amount = pos.amount + amount;
+                pos.avg_price = ((pos.avg_price * pos.amount) + (price * amount)) / total_amount;
+                pos.amount = total_amount;
+                pos.investment += investment;
+                self.current_cash -= investment;
+                self.held += amount;
+                self.trade_history.push(Trade {
+                    trade_type: TradeType::DcaBuy,
+                    datetime,
+                    price,
+                    amount,
+                });
             }
-            
-            let fee = investment * self.params.generic_fee;
-            let amount = (investment - fee) / price;
-            let total_amount = pos.amount + amount;
-            
-            // Update position details
-            pos.avg_price = ((pos.avg_price * pos.amount) + (price * amount)) / total_amount;
-            pos.amount = total_amount;
-            pos.investment += investment;
-            
-            // Update portfolio state
-            self.current_cash -= investment;
-            self.held += amount;
-            
-            // Record the trade
-            self.trade_history.push(Trade {
-                trade_type: TradeType::DcaBuy,
-                datetime,
-                price,
-                amount,
-            });
         }
     }
 
-    /// Partially sells a position to take some profits
     fn partial_sell(&mut self, idx: usize) {
         if let Some(pos) = &mut self.position {
             let price = self
@@ -401,8 +398,6 @@ impl TradingEngine {
                 .unwrap()
                 .get(idx)
                 .unwrap();
-            
-            // Only proceed if we're in profit and above our threshold
             if price > pos.avg_price * (1.0 + self.params.profit_sell_threshold) {
                 let dt_val = self
                     .final_df
@@ -413,19 +408,13 @@ impl TradingEngine {
                     .get(idx)
                     .unwrap();
                 let datetime = Utc.timestamp_millis_opt(dt_val).unwrap();
-                
-                // Sell a percentage of our position
                 let sell_amount = pos.amount * self.params.profit_sell_fraction;
                 let investment_value = sell_amount * price;
                 let fee = investment_value * self.params.generic_fee;
                 let proceeds = investment_value - fee;
-                
-                // Update position and cash
                 self.current_cash += proceeds;
                 self.held -= sell_amount;
                 pos.amount -= sell_amount;
-                
-                // Record the trade
                 self.trade_history.push(Trade {
                     trade_type: TradeType::PartialSell,
                     datetime,
@@ -476,7 +465,7 @@ impl TradingEngine {
     fn final_sell(&mut self) {
         if let Some(pos) = &self.position {
             let idx = self.final_df.height() - 1;
-            let price = self
+            let final_price = self
                 .final_df
                 .column("price")
                 .unwrap()
@@ -484,10 +473,10 @@ impl TradingEngine {
                 .unwrap()
                 .get(idx)
                 .unwrap();
-            let sell_price = if price < pos.avg_price {
+            let sell_price = if final_price < pos.avg_price {
                 pos.avg_price
             } else {
-                price
+                final_price
             };
             let dt_val = self
                 .final_df
@@ -514,7 +503,7 @@ impl TradingEngine {
         }
     }
 
-    /// Runs the simulation with optimized strategy for maximum ROI
+    /// Runs the simulation over the last 365 data points (or the full dataset if shorter).
     pub fn run_simulation(&mut self) {
         let total_data = self.final_df.height();
         let start_idx = if total_data > 365 {
@@ -523,13 +512,6 @@ impl TradingEngine {
             0
         };
         let mut in_position = false;
-        let mut waiting_for_better_entry = false;
-        let mut last_sell_price = 0.0;
-        let mut consecutive_losses = 0;
-
-        // Enhanced position tracking
-        let mut _wins = 0;
-        let mut _losses = 0;
 
         for idx in start_idx..total_data {
             let price = self
@@ -540,84 +522,21 @@ impl TradingEngine {
                 .unwrap()
                 .get(idx)
                 .unwrap();
-                
-            let ma25 = self.final_df.column("ma25").unwrap().f64().unwrap().get(idx).unwrap_or(price);
-            let rsi = self.final_df.column("rsi").unwrap().f64().unwrap().get(idx).unwrap_or(50.0);
-                
             let (buy_signal, sell_signal) = self.generate_signal(idx);
-            
-            // Enhanced strategy with DCA opportunities
-            let is_dca_buy = self.check_dca_buy_opportunity(idx);
-            let is_dca_sell = self.check_dca_sell_opportunity(idx);
 
-            // Strategy adjustments based on market conditions
-            let strong_buying_signal = buy_signal && rsi < 35.0 && price < ma25;
-            
             if !in_position {
-                // If we've sold recently, wait for a better entry
-                if waiting_for_better_entry && price >= last_sell_price {
-                    continue;
-                }
-                
-                // Adjust buying strategy based on past performance
-                if consecutive_losses >= 2 {
-                    // After multiple losses, be more selective with entries
-                    if strong_buying_signal && self.current_cash > 100.0 {
-                        self.enter_trade(idx, self.params.initial_investment_fraction * 0.7);
-                        in_position = true;
-                        waiting_for_better_entry = false;
-                    }
-                } else {
-                    // Normal entry logic
-                    if buy_signal && self.current_cash > 100.0 {
-                        // Scale initial investment based on signal strength
-                        let investment_fraction = if strong_buying_signal {
-                            self.params.initial_investment_fraction * 1.2
-                        } else {
-                            self.params.initial_investment_fraction
-                        };
-                        
-                        self.enter_trade(idx, investment_fraction.min(0.7));  // Cap at 70% of cash
-                        in_position = true;
-                        waiting_for_better_entry = false;
-                    }
+                if buy_signal && self.current_cash > 50.0 {
+                    self.enter_trade(idx, self.params.initial_investment_fraction);
+                    in_position = true;
                 }
             } else {
-                // Position management with enhanced DCA strategy
-                if is_dca_buy {
-                    self.dca_buy(idx);
-                } else if is_dca_sell {
-                    self.partial_sell(idx);
-                } else if sell_signal {
-                    // Full exit on strong sell signal
+                self.dca_buy(idx);
+                self.partial_sell(idx);
+                if sell_signal {
                     if let Some(pos) = &self.position {
                         if price > pos.avg_price {
                             self.full_sell(idx);
                             in_position = false;
-                            
-                            // Track win and update strategy parameters
-                            last_sell_price = price;
-                            waiting_for_better_entry = true;
-                            _wins += 1;
-                            consecutive_losses = 0;
-                        }
-                    }
-                }
-                
-                // Risk management - cut losses if position has been underwater for too long
-                if let Some(pos) = &self.position {
-                    if price < pos.avg_price * 0.8 {
-                        // Price dropped 20% below average - consider cutting losses
-                        let dt_val = self.final_df.column("datetime").unwrap().i64().unwrap().get(idx).unwrap();
-                        let current_time = Utc.timestamp_millis_opt(dt_val).unwrap();
-                        let time_in_position = current_time.signed_duration_since(pos.entry_time);
-                        
-                        // If we've been underwater for more than 14 days and RSI is not oversold
-                        if time_in_position.num_days() > 14 && rsi > 40.0 {
-                            self.full_sell(idx);
-                            in_position = false;
-                            consecutive_losses += 1;
-                            _losses += 1;
                         }
                     }
                 }
@@ -883,7 +802,7 @@ impl TradingEngine {
         
         for (symbol, dataframe) in assets_data {
             let params = Params::default();
-            let mut engine = TradingEngine::new(dataframe.clone(), None, params);
+            let mut engine = TradingEngine::new(symbol.to_string(), dataframe.clone(), None, params);
             
             engine.run_simulation();
             let summary = engine.get_summary();
@@ -981,171 +900,5 @@ impl TradingEngine {
         std::fs::write(file_path, html_content)?;
         
         Ok(())
-    }
-
-    /// Check if there's an opportunity for a DCA buy based on more sophisticated conditions
-    fn check_dca_buy_opportunity(&self, idx: usize) -> bool {
-        // Only relevant if we have a position
-        if self.position.is_none() {
-            return false;
-        }
-        
-        let pos = self.position.as_ref().unwrap();
-        
-        // Extract technical indicators for analysis
-        let price = self.final_df.column("price").unwrap().f64().unwrap().get(idx).unwrap();
-        let rsi = self.final_df.column("rsi").unwrap().f64().unwrap().get(idx).unwrap_or(50.0);
-        let lower_band = self.final_df.column("lower_band").unwrap().f64().unwrap().get(idx).unwrap_or(price * 0.9);
-        let macd = self.final_df.column("macd").unwrap().f64().unwrap().get(idx).unwrap_or(0.0);
-        let signal = self.final_df.column("signal").unwrap().f64().unwrap().get(idx).unwrap_or(0.0);
-        let ma25 = self.final_df.column("ma25").unwrap().f64().unwrap().get(idx).unwrap_or(price);
-        let ma50 = self.final_df.column("ma50").unwrap().f64().unwrap().get(idx).unwrap_or(price);
-        let atr14 = self.final_df.column("atr14").unwrap().f64().unwrap().get(idx).unwrap_or(price * 0.05);
-        
-        // Check if price has dropped significantly below average cost
-        let price_below_avg = price < pos.avg_price * (1.0 - self.params.dca_buy_threshold);
-        
-        // Note: we're using rsi value directly in conditions below, no need for a separate variable
-        
-        // Check if price is near or below lower Bollinger Band
-        let price_near_lower_band = price <= lower_band * 1.03;
-        
-        // Check for potential bullish MACD crossover (MACD line crossing above signal line)
-        let macd_bullish = macd > signal || (macd < 0.0 && macd > macd.abs() * -0.3 && macd > signal);
-        
-        // Check if price is near a major support level (MA25 or MA50)
-        let near_support = (price <= ma25 * 1.02 && price >= ma25 * 0.98) || 
-                          (price <= ma50 * 1.02 && price >= ma50 * 0.98);
-        
-        // Calculate volatility - we want to buy when volatility is high
-        let volatility_ratio = atr14 / price;
-        let volatility_high = volatility_ratio > 0.03; // 3% daily volatility is high for crypto
-        
-        // Basic requirement - must have enough cash for a meaningful purchase
-        let has_enough_cash = self.current_cash >= 200.0;
-        
-        // Check how many DCA buys we've already done to prevent overbuying a falling asset
-        let dca_buy_count = self.trade_history
-            .iter()
-            .filter(|t| matches!(t.trade_type, TradeType::DcaBuy))
-            .count();
-            
-        let dca_limit_reached = dca_buy_count >= 3; // Limit to 3 DCA buys per position
-        
-        // Check Fear and Greed Index for market sentiment
-        let extreme_fear = self.fgi < 20; // Extreme fear is often a good buying opportunity
-                
-        // Advanced scoring system for DCA Buy (total: 100 points)
-        let mut dca_score = 0;
-        
-        // Price is below our average cost significantly (0-40 points)
-        if price < pos.avg_price * 0.85 { dca_score += 40; }
-        else if price < pos.avg_price * 0.9 { dca_score += 30; }
-        else if price < pos.avg_price * 0.92 { dca_score += 20; } 
-        else if price_below_avg { dca_score += 10; }
-        
-        // Asset is oversold (0-20 points)
-        if rsi < 25.0 { dca_score += 20; }
-        else if rsi < 30.0 { dca_score += 15; }
-        else if rsi < 35.0 { dca_score += 10; }
-        
-        // Technical indicators suggest potential reversal (0-30 points)
-        if price_near_lower_band { dca_score += 15; }
-        if macd_bullish { dca_score += 10; }
-        if near_support { dca_score += 5; }
-        
-        // Market conditions (0-10 points)
-        if extreme_fear { dca_score += 10; }
-        if volatility_high { dca_score += 5; }
-        
-        // Apply penalties
-        if dca_limit_reached { dca_score -= 30; }
-        
-        let dca_threshold = 60; // Need 60+ points to trigger a DCA buy
-        
-        (dca_score >= dca_threshold) && has_enough_cash
-    }
-    
-    /// Check if there's an opportunity for a DCA sell (partial profit taking)
-    fn check_dca_sell_opportunity(&self, idx: usize) -> bool {
-        // Only relevant if we have a position
-        if self.position.is_none() {
-            return false;
-        }
-        
-        let pos = self.position.as_ref().unwrap();
-        let price = self.final_df.column("price").unwrap().f64().unwrap().get(idx).unwrap();
-        let rsi = self.final_df.column("rsi").unwrap().f64().unwrap().get(idx).unwrap_or(50.0);
-        let upper_band = self.final_df.column("upper_band").unwrap().f64().unwrap().get(idx).unwrap_or(price * 1.1);
-        let macd = self.final_df.column("macd").unwrap().f64().unwrap().get(idx).unwrap_or(0.0);
-        let signal = self.final_df.column("signal").unwrap().f64().unwrap().get(idx).unwrap_or(0.0);
-        let ma5 = self.final_df.column("ma5").unwrap().f64().unwrap().get(idx).unwrap_or(price);
-        let ma25 = self.final_df.column("ma25").unwrap().f64().unwrap().get(idx).unwrap_or(price);
-        let vma20 = self.final_df.column("vma20").unwrap().f64().unwrap().get(idx).unwrap_or(price);
-        
-        // Only consider DCA sell if we're in profit
-        if price <= pos.avg_price {
-            return false;
-        }
-        
-        // Check if price is significantly above our average entry
-        let profit_percentage = (price / pos.avg_price - 1.0) * 100.0;
-        
-        // Check for bearish MACD crossover (MACD line crossing below signal line)
-        let macd_bearish = macd < signal && macd > 0.0;
-        
-        // Check if price is near or above upper Bollinger Band (overbought condition)
-        let price_near_upper_band = price >= upper_band * 0.95;
-        
-        // Check if short-term MA is turning down from above medium-term MA
-        let ma_turning_down = ma5 < ma5 * 1.005 && ma5 > ma25;
-        
-        // Check volume - decreasing volume on rallies can be a reversal signal
-        let volume_confirmation = vma20 > price;
-        
-        // Check market sentiment from FGI - extreme greed suggests potential reversal
-        let extreme_greed = self.fgi > 75;
-        
-        // Advanced scoring system for DCA Sell (total: 100 points)
-        let mut sell_score = 0;
-        
-        // Profit level reached (0-40 points)
-        if profit_percentage > 25.0 { sell_score += 40; }
-        else if profit_percentage > 20.0 { sell_score += 30; }
-        else if profit_percentage > 15.0 { sell_score += 20; }
-        else if profit_percentage > self.params.profit_sell_threshold * 100.0 { sell_score += 15; }
-        
-        // Overbought conditions (0-25 points)
-        if rsi > 80.0 { sell_score += 25; }
-        else if rsi > 75.0 { sell_score += 20; }
-        else if rsi > 70.0 { sell_score += 15; }
-        else if rsi > 65.0 { sell_score += 10; }
-        
-        // Technical reversal signals (0-25 points)
-        if price_near_upper_band { sell_score += 15; }
-        if macd_bearish { sell_score += 10; }
-        if ma_turning_down { sell_score += 5; }
-        
-        // Other factors (0-10 points)
-        if extreme_greed { sell_score += 5; }
-        if !volume_confirmation { sell_score += 5; }
-        
-        // Check how many DCA sells we've already done to avoid excessive trading
-        let dca_sell_count = self.trade_history
-            .iter()
-            .filter(|t| matches!(t.trade_type, TradeType::PartialSell))
-            .count();
-        
-        // Adjust threshold based on profit level and number of previous DCA sells
-        let base_threshold = 65;
-        let adjusted_threshold = if profit_percentage > 25.0 {
-            base_threshold - 10  // Lower threshold for high profits
-        } else if dca_sell_count >= 2 {
-            base_threshold + 15  // Higher threshold after multiple sells
-        } else {
-            base_threshold
-        };
-        
-        sell_score >= adjusted_threshold
     }
 }

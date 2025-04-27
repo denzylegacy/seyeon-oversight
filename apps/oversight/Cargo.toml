@@ -7,6 +7,7 @@ edition = "2021"
 seyeon_trading_engine = { path = "../../crates/seyeon_trading_engine" }
 seyeon_rapidapi = { path = "../../crates/seyeon_rapidapi" }
 seyeon_cryptocompare = { path = "../../crates/seyeon_cryptocompare" }
+seyeon_coinlore = { path = "../../crates/seyeon_coinlore" }
 seyeon_redis = { path = "../../crates/seyeon_redis" }
 seyeon_shared_models = { path = "../../crates/seyeon_shared_models" }
 seyeon_email = { path = "../../crates/seyeon_email" }

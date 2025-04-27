@@ -2,6 +2,7 @@ use lettre::message::{Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use seyeon_redis::{CryptoStatus, TradeAction};
+use seyeon_coinlore::global_market::GlobalMarketData;
 use std::env;
 use std::str::FromStr;
 use chrono::Local;
@@ -202,7 +203,8 @@ impl EmailConfig {
         status_list: Vec<(String, TradeAction)>,
         correlation_data: Option<DataFrame>,
         performance_data: Option<Vec<AssetPerformance>>,
-        fgi_data: Option<FearAndGreedData>
+        fgi_data: Option<FearAndGreedData>,
+        global_market_data: Option<GlobalMarketData>
     ) -> Result<(), Box<dyn std::error::Error>> {
         let now = Local::now().format("%d/%m/%Y %H:%M:%S").to_string();
         let date_today = Local::now().format("%d/%m/%Y").to_string();
@@ -486,6 +488,52 @@ impl EmailConfig {
             </div>"#);
         }
 
+        // Add global cryptocurrency market data section
+        if let Some(market_data) = &global_market_data {
+            println!("  global                    Get global cryptocurrency market data");
+            html_body.push_str(r#"<div class="section-header">Global Cryptocurrency Market Overview</div>"#);
+            html_body.push_str(r#"<p>Current state of the global cryptocurrency market:</p>"#);
+            
+            html_body.push_str(r#"<table>"#);
+            html_body.push_str(&format!(
+                r#"<tr><td>Total cryptocurrencies:</td><td><strong>{}</strong></td></tr>"#, 
+                market_data.coins_count
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Active markets:</td><td><strong>{}</strong></td></tr>"#, 
+                market_data.active_markets
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Total market cap:</td><td><strong>${:.2} B</strong></td></tr>"#, 
+                market_data.total_mcap / 1_000_000_000.0
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Total 24h volume:</td><td><strong>${:.2} B</strong></td></tr>"#, 
+                market_data.total_volume / 1_000_000_000.0
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Bitcoin dominance:</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.btc_d
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Ethereum dominance:</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.eth_d
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Market cap change (24h):</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.mcap_change
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Volume change (24h):</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.volume_change
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Average price change (24h):</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.avg_change_percent
+            ));
+            html_body.push_str("</table>");
+        }
+
         if let Some(ref corr_df) = correlation_data {
             html_body.push_str(r#"<div class="section-header">Correlation Analysis</div>"#);
             html_body.push_str(r#"<p>This matrix shows the correlation between different assets. Values close to 1 indicate high positive correlation, while values close to -1 indicate high negative correlation.</p>"#);
@@ -605,6 +653,27 @@ impl EmailConfig {
             }
             
             plain_text.push_str("Note: ROI (Return on Investment) is calculated using historical data and our trading algorithm. Past performance is not indicative of future results.\n");
+        }
+        
+        // Add global cryptocurrency market data to plain text
+        if let Some(market_data) = &global_market_data {
+            plain_text.push_str("\nGlobal Cryptocurrency Market Overview:\n");
+            plain_text.push_str(&format!("Total cryptocurrencies: {}\n", market_data.coins_count));
+            plain_text.push_str(&format!("Active markets: {}\n", market_data.active_markets));
+            plain_text.push_str(&format!("Total market cap: ${:.2} Billion\n", market_data.total_mcap / 1_000_000_000.0));
+            plain_text.push_str(&format!("Total 24h volume: ${:.2} Billion\n", market_data.total_volume / 1_000_000_000.0));
+            plain_text.push_str(&format!("Bitcoin dominance: {}%\n", market_data.btc_d));
+            plain_text.push_str(&format!("Ethereum dominance: {}%\n", market_data.eth_d));
+            plain_text.push_str(&format!("Market cap change (24h): {}%\n", market_data.mcap_change));
+            plain_text.push_str(&format!("Volume change (24h): {}%\n", market_data.volume_change));
+            plain_text.push_str(&format!("Average price change (24h): {}%\n", market_data.avg_change_percent));
+        }
+
+        if let Some(fgi) = &fgi_data {
+            plain_text.push_str("\nMarket Sentiment (Fear & Greed Index):\n");
+            plain_text.push_str(&format!("Current value: {} ({})\n", fgi.value, fgi.classification));
+            plain_text.push_str(&format!("Last updated: {}\n", fgi.timestamp));
+            plain_text.push_str("The Fear & Greed Index measures market sentiment. Extreme fear can indicate buying opportunities, while extreme greed may suggest a market correction is coming.\n");
         }
 
         let email = Message::builder()

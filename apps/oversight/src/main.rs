@@ -2,6 +2,7 @@ use anyhow::Context;
 use data_fetcher::Portfolio;
 use data_fetcher::{fetch_historical_data, portfolio_fetcher};
 use seyeon_rapidapi::fgi::FearAndGreedIndexResponse;
+use seyeon_coinlore::global_market;
 use seyeon_redis::{CryptoStatus, TradeAction, get_status, set_status, get_report_status, update_report_status};
 use seyeon_trading_engine::{engine, indicators::Indicators};
 use seyeon_email::EmailConfig;
@@ -122,7 +123,7 @@ async fn run_simulation(crypto_symbol: Option<String>, days: u32) -> anyhow::Res
         };
         
         let fgi_value = fetched_data.fgi.as_ref().and_then(fgi_value);
-        let mut engine = engine::TradingEngine::new_with_symbol(df, crypto_symbol.clone(), fgi_value, engine::Params::default());
+        let mut engine = engine::TradingEngine::new(crypto_symbol.clone(), df, fgi_value, engine::Params::default());
         
         println!("Running Simulation Trading for {} with {} Days of Data...", crypto_symbol, days);
         engine.run_simulation();
@@ -261,18 +262,15 @@ async fn startup(
             }
             
             let fgi_value = fetched_data.fgi.as_ref().and_then(fgi_value);
-            let engine = engine::TradingEngine::new_with_symbol(df, crypto_symbol.clone(), fgi_value, engine::Params::default());
+            
+            let engine = engine::TradingEngine::new(crypto_symbol.clone(), df, fgi_value, engine::Params::default());
             
             let last_event = engine.poll_event();
-
-            println!("Engine Event for {}: {:#?}", crypto_symbol, last_event);
 
             let action = match last_event.signal {
                 engine::Signal::Buy => TradeAction::Buy,
                 engine::Signal::Sell => TradeAction::Sell,
                 engine::Signal::Hold => TradeAction::Hold,
-                engine::Signal::DcaBuy => TradeAction::DcaBuy,
-                engine::Signal::DcaSell => TradeAction::DcaSell,
             };
 
             let status = CryptoStatus {
@@ -367,16 +365,30 @@ async fn startup(
                 None
             }
         };
+        
+        // Fetch global cryptocurrency market data
+        println!("\n===== Fetching Global Market Data =====");
+        let global_market_data = match global_market::get_global_data().await {
+            Ok(data) => {
+                println!("Global market data fetched successfully");
+                Some(data)
+            },
+            Err(e) => {
+                eprintln!("Failed to fetch global market data: {}", e);
+                None
+            }
+        };
 
         if let Err(e) = email_config.send_daily_report(
             portfolio_signals, 
             correlation_df, 
             if !performance_data.is_empty() { Some(performance_data) } else { None },
-            fgi_data
+            fgi_data,
+            global_market_data
         ).await {
             eprintln!("Failed to send email report: {}", e);
         } else {
-            println!("\nDaily report with correlation, performance analysis, and market sentiment sent successfully by email!");
+            println!("\nDaily report with correlation, performance analysis, market sentiment, and global cryptocurrency market data sent successfully by email!");
         }
     }
 

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "apps/oversight",
+    "apps/oversight", "crates/seyeon_coinlore",
     "crates/seyeon_cryptocompare",
     "crates/seyeon_email",
     "crates/seyeon_rapidapi",
