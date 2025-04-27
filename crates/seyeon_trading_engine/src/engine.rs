@@ -51,7 +51,7 @@ impl Default for Params {
             profit_sell_fraction: 0.5,
             generic_fee: 0.005,
             buy_threshold: 3,
-            sell_threshold: 3,
+            sell_threshold: 2,
         }
     }
 }
@@ -211,11 +211,10 @@ impl TradingEngine {
             .unwrap();
 
         let mut buy_conditions = vec![
-            price > (self.current_cash + (self.current_cash * 0.01)),
             price > ma25,
             price > ma50,
             // ma50 > ma200, 
-            ma5 > (ma25 + (ma25 * 0.01)),
+            ma5 > (ma25 + (ma25 * 0.05)),
             macd > signal_val,
             rsi < 40.0,
             roc > 2.0,
@@ -225,8 +224,8 @@ impl TradingEngine {
         ];
 
         let mut sell_conditions = vec![
-            price < (self.current_cash - (self.current_cash * 0.01)),
-            ma5 > ma25, 
+            price < ma25,
+            ma5 < (ma25 + (ma25 * 0.05)),
             // ma50 < ma200,
             rsi > 65.0,
             macd < signal_val,
@@ -235,30 +234,28 @@ impl TradingEngine {
             // volume_24h > volume_ma14,
         ];
 
+        let mut buy_threshold = self.params.buy_threshold;
+        let mut sell_threshold = self.params.sell_threshold;
+
         if self.symbol == "BTC" {
-            let close_to_pi_cycle_top = ma111 >= (pi_cycle_top - (pi_cycle_top * 0.05));
+            let close_to_pi_cycle_top = ma111 >= (pi_cycle_top - (pi_cycle_top * 0.20));
 
             buy_conditions.push(close_to_pi_cycle_top);
             sell_conditions.push(close_to_pi_cycle_top);
+            
+            sell_threshold += 1;
+        } else if self.symbol == "SOL" {
+            buy_threshold += 2;
+            sell_threshold += 2;
+            
         }
 
         let buy_count = buy_conditions.iter().filter(|&&c| c).count();
 
         let sell_count = sell_conditions.iter().filter(|&&c| c).count();
 
-        // if self.fgi < 50 {
-        //     self.params.buy_threshold + 1
-        // } else {
-        //     self.params.buy_threshold
-        // };
-        // if self.fgi > 60 {
-        //     self.params.sell_threshold + 1
-        // } else {
-        //     self.params.sell_threshold
-        // };
-
-        let buy_signal = buy_count >= self.params.buy_threshold;
-        let sell_signal = sell_count >= self.params.sell_threshold;
+        let buy_signal = buy_count >= buy_threshold;
+        let sell_signal = sell_count >= sell_threshold;
 
         (buy_signal, sell_signal)
     }
@@ -503,11 +500,14 @@ impl TradingEngine {
         }
     }
 
-    /// Runs the simulation over the last 365 data points (or the full dataset if shorter).
-    pub fn run_simulation(&mut self) {
+    /// Runs the simulation over the specified number of data points (or the full dataset if shorter).
+    /// Default is 365 days if no value is provided.
+    pub fn run_simulation(&mut self, days: Option<usize>) {
         let total_data = self.final_df.height();
-        let start_idx = if total_data > 365 {
-            total_data - 365
+        let simulation_days = days.unwrap_or(365);
+        
+        let start_idx = if total_data > simulation_days {
+            total_data - simulation_days
         } else {
             0
         };
@@ -797,14 +797,14 @@ impl TradingEngine {
     }
     
     /// Run simulation for multiple assets and compare their performance
-    pub fn compare_assets_performance(assets_data: &[(&str, DataFrame)], _days: usize) -> Vec<PortfolioSimulation> {
+    pub fn compare_assets_performance(assets_data: &[(&str, DataFrame)], days: usize) -> Vec<PortfolioSimulation> {
         let mut results = Vec::new();
         
         for (symbol, dataframe) in assets_data {
             let params = Params::default();
             let mut engine = TradingEngine::new(symbol.to_string(), dataframe.clone(), None, params);
             
-            engine.run_simulation();
+            engine.run_simulation(Some(days));
             let summary = engine.get_summary();
             
             results.push(PortfolioSimulation {

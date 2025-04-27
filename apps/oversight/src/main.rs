@@ -126,7 +126,8 @@ async fn run_simulation(crypto_symbol: Option<String>, days: u32) -> anyhow::Res
         let mut engine = engine::TradingEngine::new(crypto_symbol.clone(), df, fgi_value, engine::Params::default());
         
         println!("Running Simulation Trading for {} with {} Days of Data...", crypto_symbol, days);
-        engine.run_simulation();
+        
+        engine.run_simulation(Some(days as usize));
         
         let summary = engine.get_summary();
         println!("Results for {}:", crypto_symbol);
@@ -162,6 +163,7 @@ async fn run_simulation(crypto_symbol: Option<String>, days: u32) -> anyhow::Res
 
 async fn startup(
     daily_report: bool,
+    days: u32,
 ) -> anyhow::Result<()> {
     dotenv().ok();
 
@@ -252,7 +254,6 @@ async fn startup(
             }
 
             let indicators = Indicators::new(fetched_data.historical);
-
             let df = indicators
                 .calculate()
                 .context("Failed to calculate indicators")?;
@@ -327,7 +328,7 @@ async fn startup(
         
         println!("\n===== Analyzing Asset Performance =====");
         
-        let performance_results = engine::TradingEngine::compare_assets_performance(&assets_data_refs, 365);
+        let performance_results = engine::TradingEngine::compare_assets_performance(&assets_data_refs, days as usize);
         
         let performance_data = performance_results.into_iter()
             .map(|result| seyeon_email::AssetPerformance {
@@ -418,7 +419,7 @@ fn main() -> anyhow::Result<()> {
         println!("\n===== Forcing daily report generation =====");
         
         if let Err(e) = rt.block_on(async {
-            startup(true).await
+            startup(true, args.days).await
         }) {
             eprintln!("Error during forced report generation: {}", e);
             return Err(e);
@@ -456,7 +457,7 @@ fn main() -> anyhow::Result<()> {
         };
         
         if let Err(e) = rt.block_on(async {
-            startup(daily_report).await
+            startup(daily_report, args.days).await
         }) {
             eprintln!("Error during startup: {}", e);
         }
