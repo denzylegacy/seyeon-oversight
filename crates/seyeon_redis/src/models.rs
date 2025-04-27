@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum TradeAction {
-    Hold,
-    Sell,
     Buy,
-    Any
+    Sell,
+    Hold,
+    DcaBuy,
+    DcaSell,
+    Any,
 }
 
 impl fmt::Display for TradeAction {
@@ -16,6 +18,8 @@ impl fmt::Display for TradeAction {
             TradeAction::Sell => write!(f, "Sell"),
             TradeAction::Buy => write!(f, "Buy"),
             TradeAction::Any => write!(f, "Any"),
+            TradeAction::DcaBuy => write!(f, "DcaBuy"),
+            TradeAction::DcaSell => write!(f, "DcaSell"),
         }
     }
 }

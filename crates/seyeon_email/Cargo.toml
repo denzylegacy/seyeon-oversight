@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 seyeon_redis = { path = "../../crates/seyeon_redis" }
+seyeon_coinlore = { path = "../../crates/seyeon_coinlore" }
 dotenv = "0.15.0"
 lettre = { version = "0.10", features = [
     "builder",

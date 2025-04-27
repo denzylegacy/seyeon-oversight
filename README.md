@@ -58,15 +58,60 @@ cp .env.example .env
 nano .env  # or use your preferred text editor
 ```
 
-### Running the Trading Engine
+## Usage
+
+### Running the Trading Simulator
+
+The simulator allows you to test the trading engine with historical data without sending alerts:
 
 ```bash
-# Run simulation on BTC
-cargo run --bin seyeon_trading_engine -- simulate --symbol BTC --days 2000
+# Simulate all cryptocurrencies in your portfolio
+cargo run --bin oversight -- --simulate
 
-# Get current trading signals
-cargo run --bin seyeon_trading_engine -- engine --symbol ETH --days 2000
+# Simulate a specific cryptocurrency
+cargo run --bin oversight -- --simulate --crypto BTC
+
+# Adjust simulation period (default: 365 days)
+cargo run --bin oversight -- --simulate --days 500
+
+# Combine parameters
+cargo run --bin oversight -- --simulate --crypto ETH --days 180
 ```
+
+The simulator will output:
+
+- ROI (Return on Investment) percentage
+- Final portfolio value
+- Total number of trades
+- Estimated fees paid
+- A comparison table ranking assets by performance
+
+### Running the Monitoring System
+
+The monitoring system continuously analyzes crypto assets and sends alerts:
+
+```bash
+# Run the monitoring system in background (recommended for production)
+nohup cargo run --release --bin oversight > oversight.log 2>&1 &
+
+# Force an immediate daily report generation
+cargo run --bin oversight -- --force-report
+
+# Access log files
+tail -f oversight.log
+```
+
+### API Key Load Balancing
+
+Seyeon Oversight supports multiple API keys to distribute requests and avoid rate limits:
+
+```
+# In your .env file, separate multiple keys with commas
+CRYPTOCOMPARE_API_KEY=key1,key2,key3
+RAPIDAPI_KEY=key1,key2,key3
+```
+
+The system will randomly select a key for each request, reducing the chance of hitting API rate limits.
 
 ## Security Implementation
 
@@ -74,9 +119,9 @@ cargo run --bin seyeon_trading_engine -- engine --symbol ETH --days 2000
 
 1. **Mandatory Environmental Controls:**
 
-   - Secure Linux environment (Kernel ≥6.1) | Rocky Linux
+   - Secure Linux environment (Kernel ≥6.1)
    - TPM 2.0 or Secure Enclave hardware
-   - Tor/onion network connectivity enforced during operations via Whonix gateway
+   - VPN/I2P/Onion network connectivity enforced during operations via Whonix gateway
 
 2. **Network Protection:**
 

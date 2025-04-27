@@ -2,23 +2,168 @@ use anyhow::Context;
 use data_fetcher::Portfolio;
 use data_fetcher::{fetch_historical_data, portfolio_fetcher};
 use seyeon_rapidapi::fgi::FearAndGreedIndexResponse;
+use seyeon_coinlore::global_market;
 use seyeon_redis::{CryptoStatus, TradeAction, get_status, set_status, get_report_status, update_report_status};
 use seyeon_trading_engine::{engine, indicators::Indicators};
 use seyeon_email::EmailConfig;
 use chrono::Local;
 use std::thread::sleep;
 use std::time::Duration;
-use std::env;
 mod data_fetcher;
 use dotenv::dotenv;
 use polars::prelude::*;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Force daily report generation
+    #[arg(long)]
+    force_report: bool,
+    
+    /// Run simulation only without sending emails
+    #[arg(long)]
+    simulate: bool,
+    
+    /// Specific crypto to simulate (e.g. BTC, ETH)
+    #[arg(long)]
+    crypto: Option<String>,
+
+    /// Days to use for simulation (default: 365)
+    #[arg(long, default_value = "365")]
+    days: u32,
+}
 
 fn fgi_value(response: &FearAndGreedIndexResponse) -> Option<u8> {
     Some(response.fgi.now.value as u8)
 }
 
+/// Run simulation only without sending emails or updating status
+async fn run_simulation(crypto_symbol: Option<String>, days: u32) -> anyhow::Result<()> {
+    dotenv().ok();
+    
+    let fetched_portfolio: Vec<Portfolio> = portfolio_fetcher().await?;
+    let mut cryptos_to_simulate = Vec::new();
+    
+    // If a specific symbol was provided, simulate only that one
+    if let Some(symbol) = crypto_symbol {
+        cryptos_to_simulate.push(symbol);
+    } else {
+        // Otherwise, simulate all cryptos in the portfolio
+        for field in fetched_portfolio.iter() {
+            for crypto in field.portfolio.iter() {
+                let symbol = crypto.trim_matches('"').trim().to_string();
+                cryptos_to_simulate.push(symbol);
+            }
+        }
+    }
+    
+    println!("\n===== Simulation Mode =====");
+    println!("Running Simulation for {} Cryptocurrencies Using {} Days of Data", 
+             cryptos_to_simulate.len(), days);
+    
+    // Table to store results
+    let mut simulation_results = Vec::new();
+    
+    for crypto_symbol in cryptos_to_simulate {
+        println!("\n--- Simulating {} ---", crypto_symbol);
+        
+        // Get historical data
+        let fetched_data = match fetch_historical_data(crypto_symbol.clone(), 2000).await {
+            Ok(data) => data,
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("rate limit") {
+                    eprintln!("Rate limit exceeded for {}, checking cache...", crypto_symbol);
+                    
+                    let cache_path = format!("apps/oversight/cache/{}_historical.json", crypto_symbol.to_lowercase());
+                    if std::path::Path::new(&cache_path).exists() {
+                        match std::fs::read_to_string(&cache_path) {
+                            Ok(cache_content) => {
+                                match serde_json::from_str::<data_fetcher::CacheEntry>(&cache_content) {
+                                    Ok(cache_entry) => {
+                                        eprintln!("Using cached data from {} for {}", 
+                                                 cache_entry.last_updated, 
+                                                 crypto_symbol);
+                                                 
+                                        data_fetcher::FetchedData {
+                                            historical: cache_entry.data,
+                                            fgi: None,
+                                        }
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Cache exists but cannot be parsed: {}", e);
+                                        continue;
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Cache exists but cannot be read: {}", e);
+                                continue;
+                            }
+                        }
+                    } else {
+                        eprintln!("No cache available for {}", crypto_symbol);
+                        continue;
+                    }
+                } else {
+                    eprintln!("Failed to fetch data for {}: {}", crypto_symbol, error_msg);
+                    continue;
+                }
+            }
+        };
+        
+        let indicators = Indicators::new(fetched_data.historical);
+        let df = match indicators.calculate() {
+            Ok(df) => df,
+            Err(e) => {
+                eprintln!("Error calculating indicators for {}: {}", crypto_symbol, e);
+                continue;
+            }
+        };
+        
+        let fgi_value = fetched_data.fgi.as_ref().and_then(fgi_value);
+        let mut engine = engine::TradingEngine::new(crypto_symbol.clone(), df, fgi_value, engine::Params::default());
+        
+        println!("Running Simulation Trading for {} with {} Days of Data...", crypto_symbol, days);
+        
+        engine.run_simulation(Some(days as usize));
+        
+        let summary = engine.get_summary();
+        println!("Results for {}:", crypto_symbol);
+        println!("  Initial Capital: ${:.2}", summary.initial_capital);
+        println!("  Final Value: ${:.2}", summary.final_portfolio_value);
+        println!("  ROI: {:.2}%", summary.roi);
+        println!("  Total Trades: {}", summary.num_trades);
+        println!("  Total Fees Paid: ${:.2}", summary.estimated_fees_paid);
+        
+        simulation_results.push((
+            crypto_symbol.clone(),
+            summary.roi,
+            summary.final_portfolio_value,
+            summary.num_trades
+        ));
+    }
+    
+    simulation_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    
+    println!("\n===== Simulation Results =====");
+    println!("{:<5} {:<10} {:<15} {:<15} {:<10}", "Rank", "Crypto", "ROI", "Final Value", "# Trades");
+    println!("{:-<60}", "");
+    
+    for (i, (symbol, roi, final_value, num_trades)) in simulation_results.iter().enumerate() {
+        println!("{:<5} {:<10} {:<15.2}% {:<15.2}$ {:<10}", 
+                 i+1, symbol, roi, final_value, num_trades);
+    }
+    
+    println!("\nSimulation completed successfully!");
+    
+    Ok(())
+}
+
 async fn startup(
     daily_report: bool,
+    days: u32,
 ) -> anyhow::Result<()> {
     dotenv().ok();
 
@@ -63,7 +208,7 @@ async fn startup(
                         if std::path::Path::new(&cache_path).exists() {
                             eprintln!("Using cache as fallback for {}", crypto_symbol);
                             
-                            // Desserializar manualmente o cache para contornar o erro
+                            // Manually deserialize the cache to work around the error
                             match std::fs::read_to_string(&cache_path) {
                                 Ok(cache_content) => {
                                     match serde_json::from_str::<data_fetcher::CacheEntry>(&cache_content) {
@@ -109,7 +254,6 @@ async fn startup(
             }
 
             let indicators = Indicators::new(fetched_data.historical);
-
             let df = indicators
                 .calculate()
                 .context("Failed to calculate indicators")?;
@@ -117,14 +261,12 @@ async fn startup(
             if daily_report {
                 assets_data.push((crypto_symbol.clone(), df.clone()));
             }
-
-            let params = engine::Params::default();
-
+            
             let fgi_value = fetched_data.fgi.as_ref().and_then(fgi_value);
-            let engine = engine::TradingEngine::new(df, fgi_value, params);
+            
+            let engine = engine::TradingEngine::new(crypto_symbol.clone(), df, fgi_value, engine::Params::default());
+            
             let last_event = engine.poll_event();
-
-            println!("Engine Event: {:#?}", last_event);
 
             let action = match last_event.signal {
                 engine::Signal::Buy => TradeAction::Buy,
@@ -133,7 +275,7 @@ async fn startup(
             };
 
             let status = CryptoStatus {
-                symbol: crypto_symbol,
+                symbol: crypto_symbol.clone(),
                 action,
                 sent: false,
             };
@@ -146,7 +288,6 @@ async fn startup(
                 } else {
                     println!("Email report sent successfully!");
                 }
-
             } else {
                 println!("No change in signal for {}", status.symbol);
             }
@@ -187,7 +328,7 @@ async fn startup(
         
         println!("\n===== Analyzing Asset Performance =====");
         
-        let performance_results = engine::TradingEngine::compare_assets_performance(&assets_data_refs, 365);
+        let performance_results = engine::TradingEngine::compare_assets_performance(&assets_data_refs, days as usize);
         
         let performance_data = performance_results.into_iter()
             .map(|result| seyeon_email::AssetPerformance {
@@ -203,14 +344,52 @@ async fn startup(
             }
         }
 
+        let fgi_data = match fetch_historical_data("BTC".to_string(), 1).await {
+            Ok(data) => {
+                if let Some(fgi_response) = data.fgi {
+                    println!("\nFGI data fetched successfully: {} ({})", 
+                             fgi_response.fgi.now.value, 
+                             fgi_response.fgi.now.value_text);
+                    
+                    Some(seyeon_email::FearAndGreedData {
+                        value: fgi_response.fgi.now.value as u8,
+                        classification: fgi_response.fgi.now.value_text,
+                        timestamp: fgi_response.last_updated.human_date,
+                    })
+                } else {
+                    println!("\nNo FGI data available");
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("\nFailed to fetch FGI data: {}", e);
+                None
+            }
+        };
+        
+        // Fetch global cryptocurrency market data
+        println!("\n===== Fetching Global Market Data =====");
+        let global_market_data = match global_market::get_global_data().await {
+            Ok(data) => {
+                println!("Global market data fetched successfully");
+                Some(data)
+            },
+            Err(e) => {
+                eprintln!("Failed to fetch global market data: {}", e);
+                None
+            }
+        };
+
         if let Err(e) = email_config.send_daily_report(
             portfolio_signals, 
             correlation_df, 
-            if !performance_data.is_empty() { Some(performance_data) } else { None }
+            if !performance_data.is_empty() { Some(performance_data) } else { None },
+            fgi_data,
+            global_market_data
         ).await {
             eprintln!("Failed to send email report: {}", e);
         } else {
-            println!("\nDaily report with correlation and performance analysis sent successfully by email!");
+            println!("\nDaily report with correlation, performance analysis, market sentiment, and global cryptocurrency market data sent successfully by email!");
         }
     }
 
@@ -220,17 +399,27 @@ async fn startup(
 fn main() -> anyhow::Result<()> {
     dotenv().ok();
     
-    let args: Vec<String> = env::args().collect();
-    
-    let force_report = args.iter().any(|arg| arg == "--force-report");
+    let args = Args::parse();
     
     let rt = tokio::runtime::Runtime::new().unwrap();
     
-    if force_report {
+    if args.simulate {
+        if let Err(e) = rt.block_on(async {
+            run_simulation(args.crypto, args.days).await
+        }) {
+            eprintln!("Error during simulation: {}", e);
+            return Err(e);
+        }
+        
+        println!("\nSimulation completed.");
+        return Ok(());
+    }
+    
+    if args.force_report {
         println!("\n===== Forcing daily report generation =====");
         
         if let Err(e) = rt.block_on(async {
-            startup(true).await
+            startup(true, args.days).await
         }) {
             eprintln!("Error during forced report generation: {}", e);
             return Err(e);
@@ -240,6 +429,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     
+    // Default behavior - automatic report check
     println!("\n===== Daily report will be checked and sent automatically =====");
     
     loop {
@@ -250,7 +440,7 @@ fn main() -> anyhow::Result<()> {
         let report_status = match rt.block_on(get_report_status()) {
             Ok(status) => status,
             Err(e) => {
-                eprintln!("Error getting report status from Redis: {}", e);
+                eprintln!("Erro ao obter status do relatório do Redis: {}", e);
                 seyeon_redis::models::ReportStatus::default()
             }
         };
@@ -267,7 +457,7 @@ fn main() -> anyhow::Result<()> {
         };
         
         if let Err(e) = rt.block_on(async {
-            startup(daily_report).await
+            startup(daily_report, args.days).await
         }) {
             eprintln!("Error during startup: {}", e);
         }

@@ -2,6 +2,7 @@ use lettre::message::{Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use seyeon_redis::{CryptoStatus, TradeAction};
+use seyeon_coinlore::global_market::GlobalMarketData;
 use std::env;
 use std::str::FromStr;
 use chrono::Local;
@@ -11,6 +12,13 @@ use polars::prelude::*;
 pub struct AssetPerformance {
     pub symbol: String,
     pub roi: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FearAndGreedData {
+    pub value: u8,
+    pub classification: String,
+    pub timestamp: String,
 }
 
 pub struct EmailConfig {
@@ -97,7 +105,15 @@ impl EmailConfig {
                     font-weight: bold;
                 }}
                 .hold {{
-                    color: #f39c12;
+                    color:rgba(241, 178, 41, 0.84);
+                    font-weight: bold;
+                }}
+                .dcabuy {{
+                    color: #27ae60;
+                    font-weight: bold;
+                }}
+                .dcasell {{
+                    color:rgb(180, 59, 46);
                     font-weight: bold;
                 }}
                 .footer {{
@@ -186,7 +202,9 @@ impl EmailConfig {
         &self, 
         status_list: Vec<(String, TradeAction)>,
         correlation_data: Option<DataFrame>,
-        performance_data: Option<Vec<AssetPerformance>>
+        performance_data: Option<Vec<AssetPerformance>>,
+        fgi_data: Option<FearAndGreedData>,
+        global_market_data: Option<GlobalMarketData>
     ) -> Result<(), Box<dyn std::error::Error>> {
         let now = Local::now().format("%d/%m/%Y %H:%M:%S").to_string();
         let date_today = Local::now().format("%d/%m/%Y").to_string();
@@ -241,6 +259,14 @@ impl EmailConfig {
                     color: #f39c12;
                     font-weight: bold;
                 }}
+                .dcabuy {{
+                    color: #27ae60;
+                    font-weight: bold;
+                }}
+                .dcasell {{
+                    color: #c0392b;
+                    font-weight: bold;
+                }}
                 .footer {{
                     background-color: #eeeeee;
                     padding: 15px;
@@ -286,6 +312,78 @@ impl EmailConfig {
                     color: #e74c3c;
                     font-weight: bold;
                 }}
+                /* Fear and Greed Index styling */
+                .fgi-container {{
+                    max-width: 600px;
+                    margin: 15px auto;
+                }}
+                .fgi-table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                    margin-bottom: 15px;
+                }}
+                .fgi-value {{
+                    font-size: 46px;
+                    font-weight: bold;
+                    text-align: center;
+                    padding: 25px 15px 15px 15px;
+                }}
+                .fgi-classification {{
+                    font-size: 20px;
+                    text-align: center;
+                    padding: 10px;
+                }}
+                .fgi-timestamp {{
+                    font-size: 12px;
+                    text-align: center;
+                    font-style: italic;
+                    padding: 5px 5px 15px 5px;
+                    color: #666;
+                    border-top: 1px solid rgba(0,0,0,0.05);
+                }}
+                .extreme-fear {{
+                    background-color: rgba(231, 76, 60, 0.85);
+                    color: white;
+                }}
+                .fear {{
+                    background-color: rgba(230, 126, 34, 0.85);
+                    color: white;
+                }}
+                .neutral {{
+                    background-color: rgba(241, 196, 15, 0.85);
+                    color: #333;
+                }}
+                .greed {{
+                    background-color: rgba(46, 204, 113, 0.85);
+                    color: white;
+                }}
+                .extreme-greed {{
+                    background-color: rgba(39, 174, 96, 0.85);
+                    color: white;
+                }}
+                .gauge-container {{
+                    width: 100%;
+                    height: 18px;
+                    background: linear-gradient(to right, 
+                        rgba(231, 76, 60, 0.75) 0%, 
+                        rgba(230, 126, 34, 0.75) 25%, 
+                        rgba(241, 196, 15, 0.75) 50%, 
+                        rgba(46, 204, 113, 0.75) 75%, 
+                        rgba(39, 174, 96, 0.75) 100%);
+                    border-radius: 9px;
+                    position: relative;
+                    margin: 20px 0 10px 0;
+                }}
+                .gauge-labels {{
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 12px;
+                    margin: 5px 0 0 0;
+                    color: #555;
+                }}
             </style>
         </head>
         <body>
@@ -320,7 +418,123 @@ impl EmailConfig {
                 <p>Recommendations based on technical analysis and market indicators.</p>
         "#);
 
-        if let Some(corr_df) = correlation_data {
+        if let Some(perf_data) = &performance_data {
+            html_body.push_str(r#"<div class="section-header">Performance Analysis</div>"#);
+            html_body.push_str(r#"<p>This table shows the performance of your assets based on simulated trading using our algorithm:</p>"#);
+            
+            html_body.push_str(r#"<table>"#);
+            html_body.push_str(r#"<tr><th>Rank</th><th>Asset</th><th>ROI</th></tr>"#);
+            
+            for (i, perf) in perf_data.iter().enumerate() {
+                let roi_class = if perf.roi >= 0.0 {
+                    "performance-positive"
+                } else {
+                    "performance-negative"
+                };
+                
+                html_body.push_str(&format!(
+                    r#"<tr>
+                        <td>{}</td>
+                        <td><strong>{}</strong></td>
+                        <td class="{}">{:.2}%</td>
+                    </tr>"#,
+                    i + 1, perf.symbol, roi_class, perf.roi
+                ));
+            }
+            
+            html_body.push_str("</table>");
+            html_body.push_str("<p><em>Note: ROI (Return on Investment) is calculated using historical data and our trading algorithm. Past performance is not indicative of future results.</em></p>");
+        }
+
+        if let Some(fgi) = &fgi_data {
+            // Determine class based on value
+            let fgi_class = if fgi.value <= 20 {
+                "extreme-fear"
+            } else if fgi.value <= 40 {
+                "fear"
+            } else if fgi.value <= 60 {
+                "neutral"
+            } else if fgi.value <= 80 {
+                "greed"
+            } else {
+                "extreme-greed"
+            };
+            
+            html_body.push_str(r#"<div class="section-header">Market Sentiment (Fear & Greed Index)</div>"#);
+            html_body.push_str(r#"<p>The Fear & Greed Index measures market sentiment. Extreme fear can indicate buying opportunities, while extreme greed may suggest a market correction is coming.</p>"#);
+            
+            html_body.push_str(r#"<div class="fgi-container">"#);
+            html_body.push_str(&format!(r#"<table class="fgi-table">
+                <tr>
+                    <td class="fgi-value {}">{}</td>
+                </tr>
+                <tr>
+                    <td class="fgi-classification {}">{}</td>
+                </tr>
+                <tr>
+                    <td class="fgi-timestamp">Last updated: {}</td>
+                </tr>
+            </table>"#, fgi_class, fgi.value, fgi_class, fgi.classification, fgi.timestamp));
+            
+            // Add gauge visualization (only the gradient bar, no indicator)
+            html_body.push_str(r#"<div class="gauge-container"></div>
+            <div class="gauge-labels">
+                <span>Extreme Fear</span>
+                <span>Fear</span>
+                <span>Neutral</span>
+                <span>Greed</span>
+                <span>Extreme Greed</span>
+            </div>
+            </div>"#);
+        }
+
+        // Add global cryptocurrency market data section
+        if let Some(market_data) = &global_market_data {
+            println!("  global                    Get global cryptocurrency market data");
+            html_body.push_str(r#"<div class="section-header">Global Cryptocurrency Market Overview</div>"#);
+            html_body.push_str(r#"<p>Current state of the global cryptocurrency market:</p>"#);
+            
+            html_body.push_str(r#"<table>"#);
+            html_body.push_str(&format!(
+                r#"<tr><td>Total cryptocurrencies:</td><td><strong>{}</strong></td></tr>"#, 
+                market_data.coins_count
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Active markets:</td><td><strong>{}</strong></td></tr>"#, 
+                market_data.active_markets
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Total market cap:</td><td><strong>${:.2} B</strong></td></tr>"#, 
+                market_data.total_mcap / 1_000_000_000.0
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Total 24h volume:</td><td><strong>${:.2} B</strong></td></tr>"#, 
+                market_data.total_volume / 1_000_000_000.0
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Bitcoin dominance:</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.btc_d
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Ethereum dominance:</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.eth_d
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Market cap change (24h):</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.mcap_change
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Volume change (24h):</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.volume_change
+            ));
+            html_body.push_str(&format!(
+                r#"<tr><td>Average price change (24h):</td><td><strong>{}%</strong></td></tr>"#, 
+                market_data.avg_change_percent
+            ));
+            html_body.push_str("</table>");
+        }
+
+        if let Some(ref corr_df) = correlation_data {
             html_body.push_str(r#"<div class="section-header">Correlation Analysis</div>"#);
             html_body.push_str(r#"<p>This matrix shows the correlation between different assets. Values close to 1 indicate high positive correlation, while values close to -1 indicate high negative correlation.</p>"#);
             
@@ -377,34 +591,6 @@ impl EmailConfig {
             html_body.push_str("<p><em>Note: High positive correlation (>0.7) indicates assets that tend to move together. Negative correlation indicates assets that tend to move in opposite directions, which can be useful for portfolio diversification.</em></p>");
         }
 
-        if let Some(perf_data) = &performance_data {
-            html_body.push_str(r#"<div class="section-header">Performance Analysis</div>"#);
-            html_body.push_str(r#"<p>This table shows the performance of your assets based on simulated trading using our algorithm:</p>"#);
-            
-            html_body.push_str(r#"<table>"#);
-            html_body.push_str(r#"<tr><th>Rank</th><th>Asset</th><th>ROI</th></tr>"#);
-            
-            for (i, perf) in perf_data.iter().enumerate() {
-                let roi_class = if perf.roi >= 0.0 {
-                    "performance-positive"
-                } else {
-                    "performance-negative"
-                };
-                
-                html_body.push_str(&format!(
-                    r#"<tr>
-                        <td>{}</td>
-                        <td><strong>{}</strong></td>
-                        <td class="{}">{:.2}%</td>
-                    </tr>"#,
-                    i + 1, perf.symbol, roi_class, perf.roi
-                ));
-            }
-            
-            html_body.push_str("</table>");
-            html_body.push_str("<p><em>Note: ROI (Return on Investment) is calculated using historical data and our trading algorithm. Past performance is not indicative of future results.</em></p>");
-        }
-
         html_body.push_str(r#"
             </div>
             <div class="footer">
@@ -420,36 +606,84 @@ impl EmailConfig {
         plain_text.push_str("Signal report:\n\n");
         
         for (crypto, action) in &status_list {
-            plain_text.push_str(&format!("• {} - {:?}\n", crypto, action));
+            plain_text.push_str(&format!("{}: {:?}\n", crypto, action));
         }
-        
-        if let Some(perf_data) = &performance_data {
-            plain_text.push_str("\n\nPerformance Analysis:\n");
-            for (i, perf) in perf_data.iter().enumerate() {
-                plain_text.push_str(&format!("{}. {} - ROI: {:.2}%\n", i + 1, perf.symbol, perf.roi));
+
+        plain_text.push_str("\nRecommendations based on technical analysis and market indicators.\n");
+
+        if let Some(ref corr_df) = correlation_data {
+            plain_text.push_str("\nCorrelation Analysis:\n");
+            plain_text.push_str("This matrix shows the correlation between different assets. Values close to 1 indicate high positive correlation, while values close to -1 indicate high negative correlation.\n\n");
+            
+            let column_names = corr_df.get_column_names();
+            
+            for (i, row_name) in column_names.iter().enumerate() {
+                plain_text.push_str(&format!("{}: ", row_name));
+                
+                for j in 0..column_names.len() {
+                    let corr_value = corr_df
+                        .column(column_names[j])
+                        .unwrap()
+                        .f64()
+                        .unwrap()
+                        .get(i)
+                        .unwrap_or(0.0);
+                    
+                    let formatted_value = if i == j {
+                        "1.00".to_string()
+                    } else {
+                        format!("{:.2}", corr_value)
+                    };
+                    
+                    plain_text.push_str(&format!("{} ", formatted_value));
+                }
+                
+                plain_text.push_str("\n");
             }
+            
+            plain_text.push_str("Note: High positive correlation (>0.7) indicates assets that tend to move together. Negative correlation indicates assets that tend to move in opposite directions, which can be useful for portfolio diversification.\n");
+        }
+
+        if let Some(perf_data) = &performance_data {
+            plain_text.push_str("\nPerformance Analysis:\n");
+            plain_text.push_str("This table shows the performance of your assets based on simulated trading using our algorithm:\n\n");
+            
+            for (i, perf) in perf_data.iter().enumerate() {
+                plain_text.push_str(&format!("{}: {} - ROI: {:.2}%\n", i + 1, perf.symbol, perf.roi));
+            }
+            
+            plain_text.push_str("Note: ROI (Return on Investment) is calculated using historical data and our trading algorithm. Past performance is not indicative of future results.\n");
         }
         
-        plain_text.push_str("\n\n© 2025 Seyeon Oversight - Cryptocurrency Monitoring System");
-
-        let mut builder = Message::builder()
-            .from(self.from_email.parse()?)
-            .to(self.to_email.parse()?);
-
-        for cc_email in &self.cc_emails {
-            builder = builder.cc(Mailbox::from_str(cc_email)?);
+        // Add global cryptocurrency market data to plain text
+        if let Some(market_data) = &global_market_data {
+            plain_text.push_str("\nGlobal Cryptocurrency Market Overview:\n");
+            plain_text.push_str(&format!("Total cryptocurrencies: {}\n", market_data.coins_count));
+            plain_text.push_str(&format!("Active markets: {}\n", market_data.active_markets));
+            plain_text.push_str(&format!("Total market cap: ${:.2} Billion\n", market_data.total_mcap / 1_000_000_000.0));
+            plain_text.push_str(&format!("Total 24h volume: ${:.2} Billion\n", market_data.total_volume / 1_000_000_000.0));
+            plain_text.push_str(&format!("Bitcoin dominance: {}%\n", market_data.btc_d));
+            plain_text.push_str(&format!("Ethereum dominance: {}%\n", market_data.eth_d));
+            plain_text.push_str(&format!("Market cap change (24h): {}%\n", market_data.mcap_change));
+            plain_text.push_str(&format!("Volume change (24h): {}%\n", market_data.volume_change));
+            plain_text.push_str(&format!("Average price change (24h): {}%\n", market_data.avg_change_percent));
         }
 
-        let email = builder
-            .subject(format!("🔍 Seyeon Oversight - Daily Report {}", date_today))
+        if let Some(fgi) = &fgi_data {
+            plain_text.push_str("\nMarket Sentiment (Fear & Greed Index):\n");
+            plain_text.push_str(&format!("Current value: {} ({})\n", fgi.value, fgi.classification));
+            plain_text.push_str(&format!("Last updated: {}\n", fgi.timestamp));
+            plain_text.push_str("The Fear & Greed Index measures market sentiment. Extreme fear can indicate buying opportunities, while extreme greed may suggest a market correction is coming.\n");
+        }
+
+        let email = Message::builder()
+            .from(self.from_email.parse()?)
+            .to(self.to_email.parse()?)
+            .subject(format!("Daily Report - {}", date_today))
             .multipart(
                 MultiPart::alternative()
-                    .singlepart(
-                        SinglePart::plain(plain_text)
-                    )
-                    .singlepart(
-                        SinglePart::html(html_body)
-                    )
+                    .singlepart(SinglePart::plain(plain_text))
+                    .singlepart(SinglePart::html(html_body))
             )?;
 
         let creds = Credentials::new(self.from_email.clone(), self.smtp_password.clone());
@@ -459,8 +693,9 @@ impl EmailConfig {
             .build();
 
         mailer.send(&email)?;
-        println!("\nStatus report sent by email to {} and {} CCs!", self.to_email, self.cc_emails.len());
-        
+
+        println!("Daily report sent!");
+
         Ok(())
     }
 }
