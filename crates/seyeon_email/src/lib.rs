@@ -447,7 +447,6 @@ impl EmailConfig {
         }
 
         if let Some(fgi) = &fgi_data {
-            // Determine class based on value
             let fgi_class = if fgi.value <= 20 {
                 "extreme-fear"
             } else if fgi.value <= 40 {
@@ -476,7 +475,6 @@ impl EmailConfig {
                 </tr>
             </table>"#, fgi_class, fgi.value, fgi_class, fgi.classification, fgi.timestamp));
             
-            // Add gauge visualization (only the gradient bar, no indicator)
             html_body.push_str(r#"<div class="gauge-container"></div>
             <div class="gauge-labels">
                 <span>Extreme Fear</span>
@@ -488,7 +486,6 @@ impl EmailConfig {
             </div>"#);
         }
 
-        // Add global cryptocurrency market data section
         if let Some(market_data) = &global_market_data {
             println!("  global                    Get global cryptocurrency market data");
             html_body.push_str(r#"<div class="section-header">Global Cryptocurrency Market Overview</div>"#);
@@ -655,7 +652,6 @@ impl EmailConfig {
             plain_text.push_str("Note: ROI (Return on Investment) is calculated using historical data and our trading algorithm. Past performance is not indicative of future results.\n");
         }
         
-        // Add global cryptocurrency market data to plain text
         if let Some(market_data) = &global_market_data {
             plain_text.push_str("\nGlobal Cryptocurrency Market Overview:\n");
             plain_text.push_str(&format!("Total cryptocurrencies: {}\n", market_data.coins_count));
@@ -676,11 +672,16 @@ impl EmailConfig {
             plain_text.push_str("The Fear & Greed Index measures market sentiment. Extreme fear can indicate buying opportunities, while extreme greed may suggest a market correction is coming.\n");
         }
 
-        let email = Message::builder()
+        let mut builder = Message::builder()
             .from(self.from_email.parse()?)
             .to(self.to_email.parse()?)
-            .subject(format!("Daily Report - {}", date_today))
-            .multipart(
+            .subject(format!("Daily Report - {}", date_today));
+        
+        for cc_email in &self.cc_emails {
+            builder = builder.cc(Mailbox::from_str(cc_email)?);
+        }
+
+        let email = builder.multipart(
                 MultiPart::alternative()
                     .singlepart(SinglePart::plain(plain_text))
                     .singlepart(SinglePart::html(html_body))
@@ -694,7 +695,7 @@ impl EmailConfig {
 
         mailer.send(&email)?;
 
-        println!("Daily report sent!");
+        println!("Daily report sent to {} and {} CCs!", self.to_email, self.cc_emails.len());
 
         Ok(())
     }
